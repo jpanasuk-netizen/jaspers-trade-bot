@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>15m BTC JAP · Kalshi Desk</title>
+<style>
+:root {
+  --bg:#FFF; --panel:#F5F4F1; --border:#ECECEA; --track:#F1F0EC;
+  --ink:#0A0A0A; --ink2:#3C3C38; --muted:#77776F; --muted2:#98968E;
+  --yes:#0FA968; --yes-ink:#0B7A48; --yes-dim:#D9EEE3;
+  --no:#E4573D; --no-ink:#C2402F; --no-dim:#F9DED6;
+  --mid:#C98A1B; --mid-ink:#A16207; --hold:#E3E1DA;
+  --jev-bg:#EBE7FC; --jev:#4C3EBB; --page:#F0EEE9;
+  --mono:"Cascadia Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Segoe UI",-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--page);color:var(--ink);font-family:var(--sans);font-size:14px}
+/* FULL SCROLL RESTORED */
+body{overflow:auto !important;height:auto !important;min-height:100vh}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:18px;max-width:1500px;margin:8px auto;padding-bottom:20px;overflow:visible}
+.header{display:flex;align-items:center;gap:10px;padding:10px 18px 6px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.brand{font-weight:700}
+.chip{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:3px 9px;color:var(--ink2)}
+.badge{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 8px;border-radius:8px;background:var(--panel)}
+.stats{display:flex;gap:12px;flex-wrap:wrap;padding:6px 18px;font-family:var(--mono);font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}
+.stats strong{color:var(--ink2)}
+.spacer{flex:1}
+/* TABS — click scrolls to section; ALL sections stay on page */
+.tabs{display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:20}
+.tab-btn{font-family:var(--mono);font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--panel);color:var(--ink2);border-radius:10px;padding:7px 12px;cursor:pointer}
+.tab-btn:hover{border-color:var(--muted2)}
+.tab-btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.main{display:grid;grid-template-columns:1fr 340px;gap:10px;padding:10px 14px 24px;align-items:start}
+.left,.right{display:flex;flex-direction:column;gap:10px;min-width:0}
+.block{border:1px solid var(--border);border-radius:14px;background:var(--bg);overflow:hidden}
+.block-head{padding:8px 12px 0;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted2)}
+.block-body{padding:8px 12px 12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+canvas.chart{width:100%;height:100px;display:block;background:var(--panel);border-radius:10px}
+canvas.chart.tall{height:140px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-family:var(--mono);font-size:11px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;text-align:right;color:var(--ink2);word-break:break-all}
+.call-headline{font-family:var(--mono);font-weight:700;font-size:36px;line-height:1;margin:2px 0 4px}
+.call-headline .pct{font-size:16px;font-weight:600;margin-left:8px;opacity:.75}
+.call-meta{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-word}
+.row{display:grid;grid-template-columns:40px 1fr 44px;gap:6px;align-items:center;margin:4px 0}
+.row .label{font-family:var(--mono);font-size:11px;font-weight:600}
+.row .track,.bar{height:8px;background:var(--track);border-radius:99px;overflow:hidden}
+.row .fill,.bar>i{display:block;height:100%;width:0;border-radius:99px;transition:width .2s}
+.tape{font-family:var(--mono);font-size:11px;max-height:280px;overflow:auto}
+.tape-row{display:grid;grid-template-columns:64px 44px 1fr 70px;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)}
+.tag{font-weight:700;padding:1px 5px;border-radius:5px;font-size:10px}
+.tag.YES{background:var(--yes-dim);color:var(--yes-ink)}
+.tag.NO{background:var(--no-dim);color:var(--no-ink)}
+.tag.SKIP{background:var(--hold);color:var(--mid-ink)}
+.pipe{display:flex;gap:5px;flex-wrap:wrap}
+.pipe-step{flex:1;min-width:64px;border:1px solid var(--border);border-radius:9px;padding:6px 4px;text-align:center;font-family:var(--mono);font-size:9px;text-transform:uppercase;color:var(--muted);background:var(--panel)}
+.pipe-step .sub{display:block;margin-top:3px;font-size:9px;text-transform:none;color:var(--muted)}
+.pipe-step.on{background:var(--jev-bg);color:var(--jev);font-weight:700;border-color:#cfc6f5}
+.pipe-step.bad{background:var(--no-dim);color:var(--no-ink);font-weight:700;border-color:#f0c4b8}
+.route-chip{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 7px;border-radius:7px;background:var(--panel)}
+.gauges{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.gauge{border:1px solid var(--border);border-radius:10px;padding:6px 8px;background:var(--panel)}
+.gauge .gl{font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted2)}
+.gauge .gv{font-family:var(--mono);font-size:15px;font-weight:700;margin:2px 0 4px}
+.gauge .track{height:6px;background:var(--track);border-radius:99px;overflow:hidden}
+.gauge .fill{height:100%;width:0;background:var(--jev);border-radius:99px}
+.gauge.warn .fill{background:var(--mid)} .gauge.hot .fill{background:var(--no)}
+.gate-grid{display:flex;flex-direction:column;gap:6px}
+.gate-item{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:center;padding:7px 8px;border-radius:10px;background:var(--panel);border:1px solid var(--border)}
+.gate-item .dot{width:12px;height:12px;border-radius:50%;background:var(--muted2)}
+.gate-item.red{background:#FBE9E4;border-color:#f0c4b8} .gate-item.red .dot{background:var(--no)}
+.gate-item.yellow{background:#FBF0D9;border-color:#f0e0b0} .gate-item.yellow .dot{background:#E8A317}
+.gate-item.green{background:#E5F6EE;border-color:#b8e4d0} .gate-item.green .dot{background:var(--yes)}
+.gate-item .gname{font-family:var(--mono);font-size:11px;font-weight:600}
+.gate-item .gstate{font-family:var(--mono);font-size:10px;color:var(--ink2);text-align:right}
+.gate-item .ghint{grid-column:2/4;font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:-2px}
+.verdict{font-family:var(--mono);font-weight:800;font-size:15px;letter-spacing:.03em;margin-bottom:8px}
+.verdict.red{color:var(--no-ink)} .verdict.yellow{color:var(--mid-ink)} .verdict.green{color:var(--yes-ink)}
+@media(max-width:980px){.main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="card">
+  <header class="header">
+    <span class="brand">‖ 15m BTC JAP</span>
+    <span class="badge" id="modeBadge">PAPER</span>
+    <span class="badge" id="judgeBadge">judge</span>
+    <span class="chip" id="ticker">KXBTC15M</span>
+    <span class="chip" id="windowId">window —</span>
+    <span class="chip" id="wlp">0/0/0</span>
+    <span class="spacer"></span>
+    <span class="chip" id="conn">…</span>
+    <span class="chip" id="uptime">00:00:00</span>
+    <span class="chip" id="liveTick">tick —</span>
+  </header>
+  <div class="stats">
+    <span>spot <strong id="spot">—</strong></span>
+    <span>open <strong id="openPx">—</strong></span>
+    <span>Δ <strong id="delta">—</strong></span>
+    <span>YES <strong id="yesAsk">—</strong></span>
+    <span>NO <strong id="noAsk">—</strong></span>
+    <span>left <strong id="left">—</strong></span>
+    <span>fair <strong id="statFair">—</strong></span>
+    <span>edge <strong id="statEdge">—</strong></span>
+    <span class="spacer"></span>
+    <span>fills <strong id="fills">0</strong></span>
+    <span>pnl <strong id="pnl">$0.00</strong></span>
+    <span>pts <strong id="pts">0</strong></span>
+    <span>target <strong id="target">$6</strong></span>
+  </div>
+
+  <nav class="tabs" id="deskTabs">
+    <button type="button" class="tab-btn active" data-tab="gates">Trade Gates</button>
+    <button type="button" class="tab-btn" data-tab="charts">Charts</button>
+    <button type="button" class="tab-btn" data-tab="call">Call / Book</button>
+    <button type="button" class="tab-btn" data-tab="pipeline">Pipeline</button>
+    <button type="button" class="tab-btn" data-tab="btcc">BTCC</button>
+    <button type="button" class="tab-btn" data-tab="quant">Quant / QD</button>
+    <button type="button" class="tab-btn" data-tab="metrics">Metrics</button>
+    <button type="button" class="tab-btn" data-tab="tape">Tape / Risk</button>
+  </nav>
+
+  <div class="main">
+    <section class="left">
+      <!-- CHARTS -->
+      <div class="block" id="sec-charts">
+        <div class="block-head">BTC spot · fair vs book · LIVE</div>
+        <div class="block-body">
+          <canvas id="btcSpark" class="chart tall" width="820" height="140"></canvas>
+          <div class="g2" style="margin-top:8px">
+            <canvas id="modelSpark" class="chart" width="390" height="100"></canvas>
+            <canvas id="edgeSpark" class="chart" width="390" height="100"></canvas>
+          </div>
+          <div class="call-meta" id="chartMeta" style="margin-top:6px">—</div>
+        </div>
+      </div>
+
+      <!-- CALL / BOOK -->
+      <div class="g2" id="sec-call">
+        <div class="block">
+          <div class="block-head">Side call · 15m</div>
+          <div class="block-body">
+            <div class="call-headline" id="headline">WAIT<span class="pct" id="headlinePct"></span></div>
+            <div class="call-meta" id="callMeta">—</div>
+            <div class="row"><span class="label" style="color:var(--yes-ink)">YES</span><div class="track"><div class="fill" id="yesFill" style="background:var(--yes)"></div></div><span id="yesPct">—</span></div>
+            <div class="row"><span class="label" style="color:var(--no-ink)">NO</span><div class="track"><div class="fill" id="noFill" style="background:var(--no)"></div></div><span id="noPct">—</span></div>
+            <div class="row"><span class="label" style="color:var(--mid-ink)">HOLD</span><div class="track"><div class="fill" id="holdFill" style="background:#98968E"></div></div><span id="holdPct">—</span></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+              <button type="button" id="btnSpin" style="font-family:var(--mono);font-size:12px;background:var(--ink);color:#fff;border:0;border-radius:8px;padding:8px 12px;cursor:pointer">Spin</button>
+              <button type="button" id="btnJudge" style="font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer">Judge</button>
+              <button type="button" id="btnRefresh" style="font-family:var(--mono);font-size:12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer">Refresh</button>
+            </div>
+            <div class="call-meta" id="error" style="margin-top:6px;color:var(--no-ink)" hidden></div>
+          </div>
+        </div>
+        <div class="block">
+          <div class="block-head">Kalshi book ladder</div>
+          <div class="block-body">
+            <div class="g2">
+              <div>
+                <div style="font-family:var(--mono);font-size:11px;color:var(--yes-ink);font-weight:700">YES</div>
+                <div id="ladYes"></div>
+              </div>
+              <div>
+                <div style="font-family:var(--mono);font-size:11px;color:var(--no-ink);font-weight:700">NO</div>
+                <div id="ladNo"></div>
+              </div>
+            </div>
+            <dl class="kv" style="margin-top:8px">
+              <dt>bid Y</dt><dd id="bookYesBid">—</dd>
+              <dt>ask Y</dt><dd id="bookYesAsk">—</dd>
+              <dt>mid Y</dt><dd id="bookYesMid">—</dd>
+              <dt>bid N</dt><dd id="bookNoBid">—</dd>
+              <dt>ask N</dt><dd id="bookNoAsk">—</dd>
+              <dt>last print</dt><dd id="lastPrint">—</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+
+      <!-- PIPELINE -->
+      <div class="block" id="sec-pipeline">
+        <div class="block-head">JEV pipeline · Layer 1 features</div>
+        <div class="block-body">
+          <div class="pipe" id="pipe">
+            <div class="pipe-step" data-step="L1">L1<span class="sub" id="pipeL1">—</span></div>
+            <div class="pipe-step" data-step="JEV">JEV<span class="sub" id="pipeJev">—</span></div>
+            <div class="pipe-step" data-step="L2">L2<span class="sub" id="pipeL2">—</span></div>
+            <div class="pipe-step" data-step="RISK">Risk<span class="sub" id="pipeRisk">—</span></div>
+            <div class="pipe-step" data-step="EXEC">Exec<span class="sub" id="pipeExec">—</span></div>
+          </div>
+          <div class="call-meta" style="margin-top:6px">route <span class="route-chip" id="routeChip">—</span> <span id="routeMeta"></span></div>
+          <div class="gauges" style="margin-top:8px">
+            <div class="gauge" id="gRegimeWrap"><div class="gl">Regime</div><div class="gv" id="gRegime">—</div><div class="track"><div class="fill" id="gRegimeFill"></div></div></div>
+            <div class="gauge" id="gBocpdWrap"><div class="gl">BOCPD</div><div class="gv" id="gBocpd">—</div><div class="track"><div class="fill" id="gBocpdFill"></div></div></div>
+            <div class="gauge" id="gOfiWrap"><div class="gl">OFI</div><div class="gv" id="gOfi">—</div><div class="track"><div class="fill" id="gOfiFill"></div></div></div>
+            <div class="gauge" id="gVpinWrap"><div class="gl">VPIN</div><div class="gv" id="gVpin">—</div><div class="track"><div class="fill" id="gVpinFill"></div></div></div>
+            <div class="gauge" id="gVolWrap"><div class="gl">Vol</div><div class="gv" id="gVol">—</div><div class="track"><div class="fill" id="gVolFill"></div></div></div>
+            <div class="gauge" id="gLiqWrap"><div class="gl">Liquidity</div><div class="gv" id="gLiq">—</div><div class="track"><div class="fill" id="gLiqFill"></div></div></div>
+          </div>
+          <div class="call-meta" id="layer1Triggers" style="margin-top:6px">—</div>
+        </div>
+      </div>
+
+      <!-- BTCC -->
+      <div class="block" id="sec-btcc">
+        <div class="block-head">BTCC signal board · live</div>
+        <div class="block-body">
+          <div class="g2">
+            <div>
+              <div class="call-headline" id="btccLean" style="font-size:30px">—<span class="pct" id="btccConf"></span></div>
+              <div class="call-meta" id="btccSetup">—</div>
+              <dl class="kv" style="margin-top:8px">
+                <dt>Hurst</dt><dd id="btccHurst">—</dd>
+                <dt>Gold pocket</dt><dd id="btccGp">—</dd>
+                <dt>Reclaim</dt><dd id="btccReclaim">—</dd>
+                <dt>Fair / edge</dt><dd id="btccFairEdge">—</dd>
+                <dt>Confluence</dt><dd id="btccScore">—</dd>
+                <dt>Hygiene</dt><dd id="btccHyg">—</dd>
+                <dt>Signals</dt><dd id="btccSignals">—</dd>
+              </dl>
+            </div>
+            <div>
+              <div class="call-meta" id="btccReasons">—</div>
+              <div class="call-meta" id="btccFibs" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- QUANT / QD -->
+      <div class="g2" id="sec-quant">
+        <div class="block">
+          <div class="block-head">QuantDinger · Bitcoin</div>
+          <div class="block-body">
+            <dl class="kv">
+              <dt>Symbol</dt><dd id="qdSymbol">BTC/USDT</dd>
+              <dt>Mode</dt><dd id="qdMode">—</dd>
+              <dt>Fair YES</dt><dd id="qdFair">—</dd>
+              <dt>Book YES</dt><dd id="qdBook">—</dd>
+              <dt>Edge</dt><dd id="qdEdge">—</dd>
+              <dt>Signal</dt><dd id="qdSignal">—</dd>
+              <dt>Lean</dt><dd id="qdLean">—</dd>
+              <dt>Composite</dt><dd id="qdComp">—</dd>
+            </dl>
+            <div class="call-meta" id="qdReason">—</div>
+          </div>
+        </div>
+        <div class="block">
+          <div class="block-head">Quant lab · skill vs noise</div>
+          <div class="block-body">
+            <div class="g3">
+              <div class="gauge"><div class="gl">n</div><div class="gv" id="qN">—</div></div>
+              <div class="gauge"><div class="gl">hit</div><div class="gv" id="qHit">—</div></div>
+              <div class="gauge"><div class="gl">brier</div><div class="gv" id="qBrier">—</div></div>
+              <div class="gauge"><div class="gl">sharpe</div><div class="gv" id="qSharpe">—</div></div>
+              <div class="gauge"><div class="gl">kurt</div><div class="gv" id="qKurt">—</div></div>
+              <div class="gauge"><div class="gl">edge μ</div><div class="gv" id="qEdge">—</div></div>
+            </div>
+            <canvas id="calibCanvas" class="chart" width="400" height="100" style="margin-top:8px"></canvas>
+            <div class="call-meta" id="qKelly" style="margin-top:4px">—</div>
+            <div class="call-meta" id="qPrinciples"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODEL BARS -->
+      <div class="block">
+        <div class="block-head">Decision model bars</div>
+        <div class="block-body">
+          <div id="modelBars">—</div>
+          <div class="call-meta" id="modelSources" style="margin-top:4px">—</div>
+        </div>
+      </div>
+
+      <!-- METRICS INDICATORS -->
+      <div class="block" id="sec-metrics">
+        <div class="block-head">Live metrics · value + spark + quality</div>
+        <div class="block-body" id="metricRows"></div>
+      </div>
+
+      <!-- TAPE / RISK -->
+      <div class="g2" id="sec-tape">
+        <div class="block">
+          <div class="block-head">Tape</div>
+          <div class="block-body tape" id="tape">…</div>
+        </div>
+        <div class="block">
+          <div class="block-head">Risk checklist + micro</div>
+          <div class="block-body">
+            <div id="riskList" class="call-meta">—</div>
+            <dl class="kv" style="margin-top:8px">
+              <dt>RSI</dt><dd id="microRsi">—</dd>
+              <dt>Funding</dt><dd id="microFund">—</dd>
+              <dt>OI</dt><dd id="microOi">—</dd>
+              <dt>24h%</dt><dd id="microChg">—</dd>
+              <dt>Sentiment</dt><dd id="sentLabel">—</dd>
+              <dt>Polarity</dt><dd id="sentPolarity">—</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TOP RIGHT: TRADE GATES R/Y/G -->
+    <aside class="right" id="sec-gates">
+      <div class="block">
+        <div class="block-head">TRADE GATES · red / yellow / green</div>
+        <div class="block-body">
+          <div class="verdict" id="gateVerdict">—</div>
+          <div class="gate-grid" id="gateGrid"></div>
+        </div>
+      </div>
+      <div class="block">
+        <div class="block-head">Aggregates</div>
+        <div class="block-body">
+          <dl class="kv">
+            <dt>Gate score</dt><dd id="aggScore">—</dd>
+            <dt>Sources</dt><dd id="aggSrc">—</dd>
+            <dt>Mode</dt><dd id="aggMode">—</dd>
+            <dt>Hygiene</dt><dd id="aggHyg">—</dd>
+            <dt>Latency</dt><dd id="aggLat">—</dd>
+            <dt>Window</dt><dd id="aggWin">—</dd>
+          </dl>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtPx = (v) => v==null||Number.isNaN(+v)?"—":(+v).toLocaleString(undefined,{maximumFractionDigits:2,minimumFractionDigits:2});
+const fmtPct = (v) => v==null?"—":(+(v)*100).toFixed(1)+"%";
+const fmtSec = (s) => { if(s==null)return "—"; s=Math.max(0,Math.round(+s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+const uptime = (t) => { const x=Math.max(0,Math.floor((Date.now()-t)/1000));
+  return [Math.floor(x/3600),Math.floor((x%3600)/60),x%60].map(n=>String(n).padStart(2,"0")).join(":"); };
+let startedAt = Date.now();
+const HIST = {spot:[],fair:[],book:[],edge:[],bconf:[],jconf:[],lat:[],hit:[],delta:[],hurst:[]};
+const HMAX = 80;
+function push(k,v){ if(v==null||Number.isNaN(+v))return; (HIST[k]=HIST[k]||[]).push(+v); if(HIST[k].length>HMAX)HIST[k].shift(); }
+function spark(id,key,color){
+  const c=$(id); if(!c)return; const ctx=c.getContext("2d"),W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#F1F0EC"; ctx.fillRect(0,0,W,H);
+  const a=HIST[key]||[];
+  if(a.length<2){ctx.fillStyle="#98968E";ctx.font="10px monospace";ctx.fillText("collecting…",10,H/2);return;}
+  let mn=Math.min(...a),mx=Math.max(...a); if(mx-mn<1e-9)mx=mn+1;
+  ctx.strokeStyle=color||"#4C3EBB"; ctx.lineWidth=1.5; ctx.beginPath();
+  a.forEach((v,i)=>{const x=(i/(a.length-1))*(W-4)+2,y=H-3-((v-mn)/(mx-mn))*(H-6); i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+  ctx.stroke();
+  const last=a[a.length-1];
+  ctx.fillStyle=color||"#4C3EBB";
+  ctx.beginPath(); ctx.arc(W-4,H-3-((last-mn)/(mx-mn))*(H-6),2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#77776F"; ctx.font="9px monospace";
+  ctx.fillText((mn).toFixed(2)+" → "+(mx).toFixed(2), 6, 12);
+}
+function miniSpark(key,color){
+  const a=HIST[key]||[]; const w=56,h=16;
+  if(a.length<2) return '<canvas class="m-spark" width="56" height="16"></canvas>';
+  let mn=Math.min(...a),mx=Math.max(...a); if(mx-mn<1e-9)mx=mn+1;
+  const pts=a.map((v,i)=>{const x=(i/(a.length-1))*(w-2)+1,y=h-2-((v-mn)/(mx-mn))*(h-4); return x.toFixed(1)+","+y.toFixed(1);}).join(" ");
+  return '<svg class="m-spark" width="56" height="16" viewBox="0 0 56 16"><polyline fill="none" stroke="'+(color||"#4C3EBB")+'" stroke-width="1.4" points="'+pts+'"/></svg>';
+}
+function setGauge(wrap,valEl,fillEl,val,max,label,mode){
+  const w=$(wrap); if(!w)return;
+  const v=val==null?null:+val;
+  $(valEl).textContent = label!=null?label:(v==null?"—":(Math.abs(v)<10?v.toFixed(2):v.toFixed(0)));
+  const pct=v==null?0:Math.max(0,Math.min(1,max>0?Math.abs(v)/max:0));
+  $(fillEl).style.width=(pct*100).toFixed(0)+"%";
+  w.classList.remove("warn","hot"); if(mode)w.classList.add(mode);
+}
+function setBar(fillEl,pctEl,val,decided){
+  const v=decided?Math.max(0,Math.min(1,+val||0)):0;
+  fillEl.style.width=(v*100).toFixed(1)+"%";
+  pctEl.textContent=decided?fmtPct(val):"—";
+}
+function gateClass(score){
+  if(score==null||Number.isNaN(+score)) return "red";
+  if(+score>=0.67) return "green";
+  if(+score>=0.4) return "yellow";
+  return "red";
+}
+function gateItem(name,state,hint,score){
+  const cls=gateClass(score);
+  return '<div class="gate-item '+cls+'"><span class="dot"></span><span class="gname">'+name+'</span><span class="gstate">'+state+'</span><span class="ghint">'+(hint||"")+'</span></div>';
+}
+function metRow(name,val,score,hint,key,color){
+  return '<div class="ind-row" style="display:grid;grid-template-columns:100px 70px 60px 72px 1fr;gap:6px;align-items:center;font-family:var(--mono);font-size:11px;margin:3px 0;padding:4px 6px;border-radius:8px;background:var(--panel)">'
+    +'<span style="color:var(--muted);font-size:10px;text-transform:uppercase">'+name+'</span>'
+    +'<span style="font-weight:700">'+val+'</span>'
+    +miniSpark(key,color)
+    +'<span class="m-badge '+gateClass(score)+'" style="font-family:var(--mono);font-size:9px;font-weight:700;padding:1px 4px;border-radius:4px">'
+    +(gateClass(score)==="green"?"GOOD":gateClass(score)==="yellow"?"MID":"BAD")+'</span>'
+    +'<span style="color:var(--muted);font-size:10px">'+(hint||"")+'</span></div>';
+}
+function drawCalib(bins){
+  const c=$("calibCanvas"); if(!c)return; const ctx=c.getContext("2d"),W=c.width,H=c.height;
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#F5F4F1"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#C9C7BF"; ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(16,H-12); ctx.lineTo(W-8,10); ctx.stroke(); ctx.setLineDash([]);
+  if(!bins||!bins.length){ctx.fillStyle="#98968E";ctx.font="10px monospace";ctx.fillText("calib needs sample",12,H/2);return;}
+  bins.forEach(b=>{
+    const x=16+(b.predicted||0)*(W-28), y=(H-12)-((b.empirical||0)*(H-28));
+    ctx.beginPath(); ctx.fillStyle=(b.gap||0)>0.2?"#E4573D":"#4C3EBB";
+    ctx.arc(x,y,3+(b.n||1)*0.12,0,Math.PI*2); ctx.fill();
+  });
+}
+function renderModelBars(dec,qd,b){
+  const models=(qd&&qd.models)||{};
+  const rows=[
+    ["QD composite",models.composite_signal,"#4C3EBB"],
+    ["Fair YES",models.fair_yes,"#0FA968"],
+    ["Book YES",models.book_yes,"#E4573D"],
+    ["BTCC conf",b.confidence,"#C98A1B"],
+    ["Judge conf",dec.conf,"#4C3EBB"],
+    ["Signal q",dec.signal_quality,"#0FA968"],
+    ["Toxic inv",dec.toxic_flow!=null?1-(+dec.toxic_flow):null,"#E4573D"],
+  ];
+  $("modelBars").innerHTML=rows.map(function(row){
+    const lab=row[0],v=row[1],col=row[2];
+    const n=v==null?null:Math.max(0,Math.min(1,+v));
+    return '<div class="row"><span class="label">'+lab+'</span><div class="track"><div class="fill" style="width:'+(n==null?0:(n*100).toFixed(0))+'%;background:'+col+'"></div></div><span style="font-family:var(--mono);font-size:11px">'+(n==null?"—":n.toFixed(2))+'</span></div>';
+  }).join("");
+}
+function renderTape(events,lastSpin){
+  const rows=[];
+  if(lastSpin) rows.push(lastSpin);
+  ((events||[]).map(function(e){return e.spin;}).filter(Boolean)).reverse().forEach(function(r){rows.push(r);});
+  const seen={}; const uniq=[];
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i]; const k=(r.ticker||"")+(r.ts||"")+(r.result||"");
+    if(seen[k])continue; seen[k]=1; uniq.push(r); if(uniq.length>=24)break;
+  }
+  if(!uniq.length){ $("tape").innerHTML='<div style="color:var(--muted);font-family:var(--mono);font-size:11px">waiting…</div>'; return; }
+  $("tape").innerHTML=uniq.map(function(r){
+    const side=r.side||"SKIP";
+    const tag=(side==="YES"||side==="NO")?side:"SKIP";
+    return '<div class="tape-row"><span>'+((r.ts||"").slice(11,19)||"—")+'</span><span class="tag '+tag+'">'+tag+'</span><span>'+(r.result||"—")+' · conf '+(r.conf!=null?Number(r.conf).toFixed(2):"—")+' · '+String(r.spin_reason||r.reason||"").slice(0,42)+'</span><span>'+String(r.ticker||"").slice(-8)+'</span></div>';
+  }).join("");
+}
+
+function render(s){
+  try {
+  startedAt=s.started_at||startedAt;
+  $("liveTick").textContent="tick "+new Date().toLocaleTimeString();
+  const latest=s.latest||{}, mf=s.market_fresh||{}, lastJ=s.last_judgment||{}, snap=s.snapshot||{};
+  const win=Object.assign({},snap.window||{},latest.window||{},{
+    ticker:mf.ticker||(latest.window||{}).ticker||(snap.window||{}).ticker,
+    yes_mid:mf.yes_mid!=null?mf.yes_mid:(latest.window||snap.window||{}).yes_mid,
+    yes_ask:mf.yes_ask!=null?mf.yes_ask:(latest.window||snap.window||{}).yes_ask,
+    open_of_window:mf.open_of_window!=null?mf.open_of_window:(latest.window||snap.window||{}).open_of_window,
+  });
+  const spot=mf.price!=null?mf.price:((latest.spot||{}).price||(snap.spot||{}).price);
+  const ff=mf.fast_feed||{};
+  const dec=Object.assign({},latest.decision||{},{
+    side:lastJ.side||(latest.decision||{}).side,
+    conf:lastJ.conf!=null?lastJ.conf:(latest.decision||{}).conf,
+    judge_src:lastJ.judge_src||(latest.decision||{}).judge_src,
+    trade_action:lastJ.trade_action||(latest.decision||{}).trade_action,
+    route:lastJ.route||(latest.decision||{}).route,
+    reason:lastJ.reason||(latest.decision||{}).reason,
+    signal_quality:lastJ.signal_quality, toxic_flow:lastJ.toxic_flow,
+    probabilities:lastJ.probabilities||(latest.decision||{}).probabilities||{},
+  });
+  const probs=dec.probabilities||{};
+  const meta=s.meta||{};
+  const b=s.btcc||{}; const hy=b.hygiene||{}; const q=s.quant||{};
+  const qdP=s.quantdinger||{}; const qdB=qdP.btc||{}; const qdM=qdB.models||{}; const qdD=qdB.decision||{};
+  const rk=latest.risk_gate||lastJ.risk||{};
+  const tot=latest.totals||{};
+  const confFloor=(latest.gates&&latest.gates.conf_floor)!=null?latest.gates.conf_floor:0.45;
+
+  const fair=ff.fair_yes!=null?ff.fair_yes:qdM.fair_yes;
+  const edge=ff.edge_vs_book!=null?ff.edge_vs_book:qdM.edge_vs_book;
+  const book=win.yes_mid!=null?win.yes_mid:qdM.book_yes;
+  const deltaPct=(spot!=null&&win.open_of_window)?((+spot-+win.open_of_window)/+win.open_of_window)*100:null;
+  const lat=Math.max(+(ff.book_ms||999),+(ff.spot_ms||999));
+
+  push("spot",spot); push("fair",fair); push("book",book); push("edge",edge);
+  push("bconf",b.confidence); push("jconf",dec.conf); push("delta",deltaPct);
+  push("lat",lat<900?lat:null); push("hit",q.hit_rate); push("hurst",b.hurst);
+
+  $("spot").textContent=fmtPx(spot);
+  $("openPx").textContent=fmtPx(win.open_of_window);
+  $("delta").textContent=deltaPct==null?"—":(deltaPct>=0?"+":"")+deltaPct.toFixed(2)+"¢";
+  $("delta").style.color=deltaPct==null?"":(deltaPct>=0?"var(--yes-ink)":"var(--no-ink)");
+  $("yesAsk").textContent=fmtPx(win.yes_ask);
+  $("noAsk").textContent=fmtPx(win.no_ask);
+  $("left").textContent=fmtSec(win.seconds_left);
+  $("statFair").textContent=fair!=null?(+fair).toFixed(3):"—";
+  $("statEdge").textContent=edge!=null?(+edge).toFixed(3):"—";
+  $("ticker").textContent=win.ticker||meta.market||"KXBTC15M";
+  $("windowId").textContent=win.window_id?("window "+win.window_id):(mf.ticker||"—");
+  $("wlp").textContent=(tot.wins||0)+"/"+(tot.losses||0)+"/"+(tot.pushes||0);
+  $("modeBadge").textContent=meta.liveTrading?"LIVE":"PAPER";
+  $("modeBadge").style.background=meta.liveTrading?"#FBF0D9":"var(--panel)";
+  $("judgeBadge").textContent=dec.judge_src||meta.model||"judge";
+  $("conn").textContent=s.connection||"—";
+  $("uptime").textContent=uptime(s.started_at);
+  $("fills").textContent=tot.fills!=null?tot.fills:0;
+  const pnl=+(tot.pnlUsd||0);
+  $("pnl").textContent=(pnl>=0?"+$":"$")+Math.abs(pnl).toFixed(2);
+  $("pnl").style.color=pnl>=0?"var(--yes-ink)":"var(--no-ink)";
+  $("pts").textContent=(s.charts&&s.charts.spot&&s.charts.spot.length)||0;
+  $("target").textContent="$"+(+(b.recover_target_usd||meta.martingaleTarget||6)).toFixed(0);
+
+  const qdLean=qdD.lean, btccLean=b.lean;
+  let side=dec.side||"";
+  if(side!=="YES"&&side!=="NO"&&(btccLean==="YES"||btccLean==="NO")) side=btccLean;
+  if(side!=="YES"&&side!=="NO"&&(qdLean==="YES"||qdLean==="NO")) side=qdLean;
+  const word=(side==="YES"||side==="NO")?side:"HOLD";
+  const hl=$("headline");
+  if(hl&&hl.childNodes[0]) hl.childNodes[0].nodeValue=word;
+  $("headlinePct").textContent=dec.conf!=null?fmtPct(dec.conf):"";
+  if(hl) hl.style.color=word==="YES"?"var(--yes-ink)":word==="NO"?"var(--no-ink)":"var(--mid-ink)";
+  $("callMeta").textContent=[
+    dec.trade_action?("act "+dec.trade_action):null,
+    dec.judge_src?("src "+dec.judge_src):null,
+    btccLean?("BTCC "+btccLean+" "+(b.setup||"")):null,
+    qdLean?("QD "+qdLean):null,
+    fair!=null?("fair "+(+fair).toFixed(3)):null,
+    edge!=null?("edge "+(+edge).toFixed(3)):null,
+    dec.reason?String(dec.reason).slice(0,140):null,
+  ].filter(Boolean).join(" · ")||"—";
+
+  const decided=(word==="YES"||word==="NO"||word==="HOLD");
+  const pYes=probs.yes!=null?probs.yes:fair;
+  const pNo=probs.no!=null?probs.no:(fair!=null?1-(+fair):null);
+  setBar($("yesFill"),$("yesPct"),pYes,decided||fair!=null);
+  setBar($("noFill"),$("noPct"),pNo,decided||fair!=null);
+  setBar($("holdFill"),$("holdPct"),probs.hold!=null?probs.hold:0,decided);
+
+  spark("btcSpark","spot","#0FA968");
+  spark("modelSpark","fair","#4C3EBB");
+  spark("edgeSpark","edge","#C98A1B");
+  $("chartMeta").textContent=[
+    "live "+new Date().toLocaleTimeString(),
+    "spot "+fmtPx(spot)+(mf.spot_source?" @"+mf.spot_source:""),
+    "fair "+(fair!=null?(+fair).toFixed(3):"—"),
+    "book "+(book!=null?(+book).toFixed(3):"—"),
+    "edge "+(edge!=null?(+edge).toFixed(3):"—"),
+    ff.book_ms!=null?("book "+ff.book_ms+"ms"):null,
+    ff.spot_ms!=null?("spot "+ff.spot_ms+"ms"):null,
+    "pts "+((s.charts&&s.charts.spot&&s.charts.spot.length)||0),
+  ].filter(Boolean).join("  ·  ");
+
+  $("bookYesBid").textContent=fmtPx(win.yes_bid!=null?win.yes_bid:null);
+  $("bookYesAsk").textContent=fmtPx(win.yes_ask);
+  $("bookYesMid").textContent=fmtPx(win.yes_mid!=null?win.yes_mid:book);
+  $("bookNoAsk").textContent=fmtPx(win.no_ask);
+  $("bookNoBid").textContent=fmtPx(win.no_bid);
+  $("lastPrint").textContent=ff.last_print?((+ff.last_print.yes).toFixed(2)+" @ "+String(ff.last_print.ts||"").slice(11,19)):"—";
+  function lad(lab,v,cls){
+    return '<div class="row" style="grid-template-columns:36px 1fr 40px"><span class="label">'+lab+'</span><div class="track"><div class="fill" style="width:'+(v==null?0:Math.max(0,Math.min(1,+v))*100).toFixed(0)+'%;background:'+cls+'"></div></div><span style="font-family:var(--mono);font-size:10px">'+(v==null?"—":(+v).toFixed(2))+'</span></div>';
+  }
+  $("ladYes").innerHTML=lad("bid",win.yes_bid,"var(--yes)")+lad("mid",win.yes_mid,"var(--yes)")+lad("ask",win.yes_ask,"var(--yes)")+lad("fair",fair,"var(--jev)");
+  $("ladNo").innerHTML=lad("ask",win.no_ask,"var(--no)")+lad("mid",(book!=null?1-(+book):null),"var(--no)")+lad("fair",(fair!=null?1-(+fair):null),"var(--jev)");
+
+  const l1=lastJ.layer1||{};
+  const riskBlocked=!!rk.blocked;
+  const routeSkip=String(dec.route||"")==="SKIP";
+  document.querySelectorAll(".pipe-step").forEach(function(el){
+    el.classList.remove("on","bad");
+    const k=el.dataset.step;
+    if(k==="L1") el.classList.add("on");
+    if(k==="JEV"&&/jev|typesafe/i.test(String(dec.judge_src||""))) el.classList.add("on");
+    if(k==="RISK") el.classList.add(riskBlocked?"bad":"on");
+    if(k==="EXEC") el.classList.add(riskBlocked||routeSkip?"bad":"on");
+  });
+  $("pipeL1").textContent=(l1.regime)||"—";
+  $("pipeJev").textContent=dec.judge_src||"—";
+  $("pipeL2").textContent=dec.route==="ESCALATE"?"escalate":"skip";
+  $("pipeRisk").textContent=riskBlocked?"BLOCK":"ALLOW";
+  $("pipeExec").textContent=riskBlocked?"hold":"code";
+  $("routeChip").textContent=dec.route||"—";
+  $("routeMeta").textContent=[dec.model||meta.jevModel,lastJ.decision_latency_ms?lastJ.decision_latency_ms+"ms":"",meta.architecture].filter(Boolean).join(" · ");
+  setGauge("gRegimeWrap","gRegime","gRegimeFill",l1.regime?(l1.regime_probs&&l1.regime_probs[l1.regime]||0.5):null,1,l1.regime||"—",l1.regime==="crisis"?"hot":l1.regime==="high_vol"?"warn":null);
+  setGauge("gBocpdWrap","gBocpd","gBocpdFill",l1.bocpd_alarm,3,null,+(l1.bocpd_alarm||0)>=0.85?"hot":+(l1.bocpd_alarm||0)>=0.5?"warn":null);
+  setGauge("gOfiWrap","gOfi","gOfiFill",l1.ofi_proxy,1,null,null);
+  setGauge("gVpinWrap","gVpin","gVpinFill",l1.vpin_proxy,1,null,+(l1.vpin_proxy||0)>0.6?"hot":null);
+  setGauge("gVolWrap","gVol","gVolFill",l1.vol_proxy,3,null,+(l1.vol_proxy||0)>1.8?"hot":null);
+  setGauge("gLiqWrap","gLiq","gLiqFill",l1.liquidity_stressed_proxy,1,null,null);
+  $("layer1Triggers").textContent="triggers: "+((l1.triggers&&l1.triggers.join(", "))||"none");
+
+  $("qdSymbol").textContent=(qdP.integration&&qdP.integration.symbol)||"BTC/USDT";
+  $("qdMode").textContent=(qdP.integration&&qdP.integration.mode)||"—";
+  $("qdFair").textContent=qdM.fair_yes!=null?(+qdM.fair_yes).toFixed(3):"—";
+  $("qdBook").textContent=qdM.book_yes!=null?(+qdM.book_yes).toFixed(3):"—";
+  $("qdEdge").textContent=qdM.edge_vs_book!=null?(+qdM.edge_vs_book).toFixed(3):"—";
+  $("qdSignal").textContent=qdM.composite_signal!=null?(+qdM.composite_signal).toFixed(3):"—";
+  $("qdComp").textContent=qdM.trend_score!=null?("trend "+(+qdM.trend_score).toFixed(3)):"—";
+  $("qdLean").textContent=(qdD.lean||"—")+(qdD.conf!=null?(" @ "+(+qdD.conf).toFixed(2)):"");
+  $("qdLean").style.color=qdD.lean==="YES"?"var(--yes-ink)":qdD.lean==="NO"?"var(--no-ink)":"var(--mid-ink)";
+  $("qdReason").textContent=qdD.reason||"—";
+
+  $("qN").textContent=q.sample_n_judgments!=null?q.sample_n_judgments:"—";
+  $("qHit").textContent=q.hit_rate!=null?((+q.hit_rate)*100).toFixed(1)+"%":"—";
+  $("qBrier").textContent=q.calibration&&q.calibration.brier!=null?(+q.calibration.brier).toFixed(3):"—";
+  $("qSharpe").textContent=q.period_sharpe!=null?(+q.period_sharpe).toFixed(2):(q.mean_fair_edge!=null?("e "+(+q.mean_fair_edge).toFixed(3)):"thin");
+  $("qKurt").textContent=q.tails&&q.tails.excess_kurtosis!=null?(+q.tails.excess_kurtosis).toFixed(2):"—";
+  $("qEdge").textContent=q.mean_fair_edge!=null?(+q.mean_fair_edge).toFixed(3):"—";
+  $("qKelly").textContent=(q.kelly_policy&&q.kelly_policy.allowed?"Kelly allowed":"Kelly locked")+" · mode "+(q.kelly_policy&&q.kelly_policy.allowed?"fractional":"fixed");
+  $("qPrinciples").textContent=(q.principles||[]).join(" · ");
+  drawCalib((q.calibration&&q.calibration.bins)||[]);
+
+  renderModelBars(dec,qdP,b);
+  $("modelSources").textContent=[dec.judge_src,btccLean?("BTCC "+btccLean):null,qdLean?("QD "+qdLean):null,riskBlocked?"RISK BLOCK":null].filter(Boolean).join(" + ")||"—";
+
+  renderTape(s.events,s.last_spin);
+
+  // TRADE GATES
+  const fairDist=fair==null?null:Math.min(1,Math.abs(+fair-0.5)*2);
+  const edgeScore=edge==null?null:Math.min(1,Math.abs(+edge)/0.2);
+  const btccScore=(b.lean==="YES"||b.lean==="NO")?Math.max(0.2,+(b.confidence||0)):0.15;
+  const qdScore=(qdD.lean==="YES"||qdD.lean==="NO")?Math.max(0.2,+(qdD.conf||0)):0.15;
+  const confScore=dec.conf==null?0.2:+dec.conf;
+  let hScore=0.25,hState=b.hurst==null?"—":(+b.hurst).toFixed(3);
+  if(b.hurst!=null){ if(+b.hurst>0.55||+b.hurst<0.45){hScore=Math.min(1,Math.abs(+b.hurst-0.5)*4+0.4); hState=hState+" "+(+b.hurst>0.55?"trend":"fade");} else {hScore=0.3; hState=hState+" random";} }
+  const latScore=lat==null?0.3:(lat<=60?1:lat<=120?0.75:lat<=250?0.5:0.25);
+  const hyScore=(hy.veto&&!hy.override)?0:1;
+  const riskScore=!riskBlocked?1:0;
+  const brier=q.calibration&&q.calibration.brier;
+  const calScore=brier==null?0.25:Math.max(0,Math.min(1,1-(+brier)/0.5));
+  const cheap=Math.max(win.yes_ask!=null?1-(+win.yes_ask):0,win.no_ask!=null?1-(+win.no_ask):0);
+  const secs=win.seconds_left;
+  const secScore=secs==null?0.3:(secs>60?1:secs>20?0.6:0.2);
+  const gates=[
+    gateItem("Fair conviction",fair==null?"—":((+fair).toFixed(3)+" "+((+fair)>=0.5?"YES":"NO")),fairDist==null?"no fair":"strength = |fair−0.5|×2",fairDist),
+    gateItem("Edge vs book",edge==null?"—":(+edge).toFixed(3),edge==null?"—":(Math.abs(+edge)>=0.08?((+edge>0?"→ YES lead":"→ NO lead")):"weak lead"),edgeScore),
+    gateItem("BTCC setup",(b.lean||"—")+" "+(b.setup||""),b.setup==="HIGH CONFLUENCE"?"fib/edge confluence":b.setup==="SETUP"?"setup forming":"no setup",btccScore),
+    gateItem("QD-BTC lean",(qdD.lean||"—")+(qdD.conf!=null?(" "+(+qdD.conf).toFixed(2)):""),"QuantDinger composite",qdScore),
+    gateItem("Judge conf",dec.conf!=null?(+dec.conf).toFixed(2):"—","need ≥ "+confFloor+" to fire",confScore>=confFloor?confScore:Math.max(0.15,confScore*0.7)),
+    gateItem("Hurst H",hState,">0.55 trend · <0.45 fade · ~0.5 random",hScore),
+    gateItem("Feed latency",(ff.book_ms!=null?ff.book_ms:"—")+"/"+(ff.spot_ms!=null?ff.spot_ms:"—")+"ms","fast = spot leads Kalshi",latScore),
+    gateItem("Hygiene",hy.override?"OFF (nix)":hy.veto?"VETO":"clear",hy.override?"override — take risk":"doctrine",hyScore),
+    gateItem("Risk gate",riskBlocked?"BLOCK":(rk.verdict||"ALLOW"),riskBlocked?((rk.reasons||[]).join(", ").slice(0,70)||"any fail = no trade"):"hard checks passed",riskScore),
+    gateItem("Calibration",brier!=null?("brier "+(+brier).toFixed(3)):("n="+(q.sample_n_judgments||0)),"≤0.25 calibrated",calScore),
+    gateItem("Entry cost","Y"+(win.yes_ask!=null?(+win.yes_ask).toFixed(2):"—")+" N"+(win.no_ask!=null?(+win.no_ask).toFixed(2):"—"),"cheaper ticket preferred",cheap>0?Math.max(0.15,Math.min(1,cheap)):0.2),
+    gateItem("Window secs",fmtSec(secs),secScore>=0.6?"fresh enough":"stale / closing",secScore),
+  ];
+  const scores=[fairDist,edgeScore,btccScore,qdScore,confScore,hScore,latScore,hyScore,riskScore,calScore,secScore].filter(function(x){return x!=null;});
+  const agg=scores.length?scores.reduce(function(a,c){return a+c;},0)/scores.length:0;
+  const vEl=$("gateVerdict");
+  const vCls=(!riskBlocked&&agg>=0.67)?"green":(!riskBlocked&&agg>=0.45)?"yellow":"red";
+  vEl.className="verdict "+vCls;
+  vEl.textContent=vCls==="green"?"GREEN · conditions look tradeable":vCls==="yellow"?"YELLOW · getting closer":"RED · do not trade this tick";
+  $("gateGrid").innerHTML=gates.join("");
+
+  $("aggScore").textContent=agg.toFixed(2)+" · "+vCls.toUpperCase();
+  $("aggSrc").textContent=[dec.judge_src,btccLean?("BTCC"):null,qdLean?("QD"):null].filter(Boolean).join("+")||"—";
+  $("aggMode").textContent=(meta.liveTrading?"LIVE":"PAPER")+" · target $"+(+(b.recover_target_usd||6)).toFixed(0);
+  $("aggHyg").textContent=hy.override?"nix override":hy.veto?"VETO":"clear";
+  $("aggLat").textContent=(ff.book_ms!=null?ff.book_ms:"—")+"/"+(ff.spot_ms!=null?ff.spot_ms:"—")+"ms";
+  $("aggWin").textContent=win.ticker||"—";
+
+  const bl=$("btccLean");
+  if(bl&&bl.childNodes[0]){
+    bl.childNodes[0].nodeValue=b.lean||"—";
+    $("btccConf").textContent=b.confidence!=null?(" @ "+(+b.confidence).toFixed(2)):"";
+    bl.style.color=b.lean==="YES"?"var(--yes-ink)":b.lean==="NO"?"var(--no-ink)":"var(--mid-ink)";
+  }
+  $("btccSetup").textContent=b.setup||"—";
+  $("btccHurst").textContent=b.hurst!=null?String(b.hurst):"—";
+  $("btccGp").textContent=(b.fibs&&b.fibs.in_golden_pocket)?"YES":"no";
+  const lv=(b.fibs&&b.fibs.levels)||{};
+  $("btccReclaim").textContent=lv.reclaim!=null?fmtPx(lv.reclaim):"—";
+  $("btccFairEdge").textContent=(fair!=null?(+fair).toFixed(2):"—")+" / "+(edge!=null?(+edge).toFixed(2):"—");
+  $("btccScore").textContent=b.confluence_score!=null?String(b.confluence_score):"—";
+  $("btccHyg").textContent=hy.override?"nix":hy.veto?"VETO":"clear";
+  $("btccSignals").textContent=(b.signals||[]).join(", ")||"—";
+  $("btccReasons").textContent=(b.reasons||[]).join(" · ")||"—";
+  $("btccFibs").textContent="fib: "+Object.keys(lv).slice(0,8).map(function(k){
+    const v=lv[k]; return k+"="+(Array.isArray(v)?v.map(function(x){return fmtPx(x);}).join("-"):fmtPx(v));
+  }).join("  ");
+
+  $("metricRows").innerHTML=[
+    metRow("Spot",fmtPx(spot),fairDist!=null?(deltaPct!=null?Math.min(1,Math.abs(deltaPct)/0.5):0.5):null,deltaPct>0?"up→YES":deltaPct<0?"down→NO":"flat","spot","#0FA968"),
+    metRow("Fair YES",fair!=null?(+fair).toFixed(3):"—",fairDist,fair!=null?((+fair)>=0.55?"YES lean":(+fair)<=0.45?"NO lean":"unclear"):"n/a","fair","#4C3EBB"),
+    metRow("Edge",edge!=null?(+edge).toFixed(3):"—",edgeScore,edge!=null?(Math.abs(+edge)>=0.08?((+edge>0?"YES":"NO")+" lead"):"weak"):"n/a","edge","#C98A1B"),
+    metRow("Book YES",book!=null?(+book).toFixed(3):"—",book!=null?Math.abs(+book-0.5)*2*0.5+0.3:null,"Kalshi mid","book","#E4573D"),
+    metRow("BTCC",(b.lean||"—")+" "+(b.confidence!=null?(+b.confidence).toFixed(2):""),btccScore,b.setup||"—","bconf","#C98A1B"),
+    metRow("QD",qdD.lean||"—",qdScore,qdD.reason?String(qdD.reason).slice(0,28):"—","jconf","#0FA968"),
+    metRow("Judge conf",dec.conf!=null?(+dec.conf).toFixed(2):"—",confScore,confScore>=confFloor?"above floor":"below floor","jconf","#4C3EBB"),
+    metRow("Latency",lat<900?lat+"ms":"—",latScore,latScore>=0.75?"fast":latScore>=0.5?"ok":"slow","lat","#E4573D"),
+    metRow("Hit rate",q.hit_rate!=null?((+q.hit_rate)*100).toFixed(0)+"%":"—",calScore,"n="+(q.sample_n_judgments||0),"hit","#0FA968"),
+    metRow("Hurst",b.hurst!=null?String(b.hurst):"—",hScore,hState,"hurst","#C98A1B"),
+  ].join("");
+
+  const checks=rk.checks||[];
+  $("riskList").innerHTML=checks.length?checks.map(function(c){
+    const ok=c.ok!==false;
+    return '<div style="font-family:var(--mono);font-size:10px;color:'+(ok?"var(--yes-ink)":"var(--no-ink)")+'">'+(ok?"✓":"✗")+" "+c.check+": "+(c.detail||c.rule||"")+"</div>";
+  }).join(""):"—";
+  const micro=latest.microstructure||lastJ.microstructure||qdB.micro||{};
+  $("microRsi").textContent=micro.rsi_14!=null?Number(micro.rsi_14).toFixed(1):"—";
+  $("microFund").textContent=micro.funding_rate_pct!=null?Number(micro.funding_rate_pct).toFixed(4)+"%":"—";
+  $("microOi").textContent=micro.open_interest_usd!=null?Number(micro.open_interest_usd).toLocaleString():"—";
+  $("microChg").textContent=micro.change_24h_pct!=null?Number(micro.change_24h_pct).toFixed(2)+"%":"—";
+  $("sentLabel").textContent=(latest.sentiment||{}).label||(b.social_label)||"—";
+  $("sentPolarity").textContent=(latest.sentiment||{}).polarity!=null?Number((latest.sentiment||{}).polarity).toFixed(2):"—";
+
+  if(s.error){ $("error").hidden=false; $("error").textContent=s.error; } else { $("error").hidden=true; }
+  } catch (err) {
+    console.warn("render error", err);
+    $("conn").textContent="render-err";
+  }
+}
+
+async function load(){
+  try{
+    const r=await fetch("/api/state?ts="+Date.now(),{cache:"no-store"});
+    const data=await r.json();
+    render(data);
+  }catch(e){
+    $("conn").textContent="offline";
+  }
+}
+
+// Tabs = scroll to section (all content stays visible)
+document.querySelectorAll(".tab-btn").forEach(function(btn){
+  btn.addEventListener("click",function(){
+    document.querySelectorAll(".tab-btn").forEach(function(x){x.classList.remove("active");});
+    btn.classList.add("active");
+    const id="sec-"+btn.dataset.tab;
+    const el=document.getElementById(id);
+    if(el) el.scrollIntoView({behavior:"smooth",block:"start"});
+  });
+});
+
+$("btnRefresh").onclick=function(){load();};
+$("btnJudge").onclick=async function(){
+  $("btnJudge").disabled=true;
+  try{ await post("/api/judgment",{force:true}); await post("/api/tick",{spin:false}); await load(); }
+  finally{ $("btnJudge").disabled=false; }
+};
+$("btnSpin").onclick=async function(){
+  $("btnSpin").disabled=true;
+  try{ await post("/api/spin",{force:true}); await load(); }
+  finally{ $("btnSpin").disabled=false; }
+};
+async function post(url,body){
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  return r.json();
+}
+load();
+setInterval(load,1000);
+setInterval(function(){ $("uptime").textContent=uptime(startedAt); },1000);
+</script>
+</body>
+</html>

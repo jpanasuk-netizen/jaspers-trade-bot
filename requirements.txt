@@ -1,0 +1,6 @@
+# Core bot runs on Python stdlib only.
+# Optional upgrades:
+# websocket-client>=1.8   # live Coinbase book (REST fallback works without it)
+# cryptography>=42         # live Kalshi orders (paper mode works without it)
+# typesafe-sdk             # Jev System One judgments (deterministic fallback without it)
+# requests>=2.32           # nicer HTTP if preferred over urllib

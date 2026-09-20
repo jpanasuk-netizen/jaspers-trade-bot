@@ -1,0 +1,25 @@
+# Jev-15m Kalshi desk + QuantDinger notes
+# Docker is NOT installed on this Windows host — install Docker Desktop first.
+#
+# 1) Kalshi desk HUD (this bot) — lightweight container
+# 2) QuantDinger (OpenByteInc) — official GHCR compose stack
+
+services:
+  jev-desk:
+    image: python:3.12-slim
+    container_name: jev-15m-kalshi
+    working_dir: /desk
+    volumes:
+      - ./:/desk
+      - ./data:/desk/data
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+    command: >
+      sh -c "python -m pip install -q typesafe-sdk requests
+      && python -m app.main"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

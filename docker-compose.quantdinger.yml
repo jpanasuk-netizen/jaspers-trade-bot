@@ -1,0 +1,39 @@
+# QuantDinger — OpenByteInc AI Trading OS (from Ruuj thread)
+# Prebuilt GHCR stack. Requires Docker Desktop on Windows.
+#
+# Official one-liner (PowerShell):
+#   irm https://raw.githubusercontent.com/OpenByteInc/QuantDinger/main/install.ps1 | iex
+#
+# Or clone + compose (source):
+#   git clone https://github.com/OpenByteInc/QuantDinger.git
+#   cd QuantDinger
+#   cp backend_api_python/env.example backend_api_python/.env
+#   cp .env.example .env
+#   # set SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY, ADMIN_USER, ADMIN_PASSWORD,
+#   # POSTGRES_PASSWORD, REDIS_PASSWORD, CELERY_REDIS_PASSWORD
+#   docker compose -f docker-compose.ghcr.yml up -d
+#
+# Endpoints after start:
+#   Web   http://127.0.0.1:8888
+#   H5    http://127.0.0.1:8889
+#   API   http://127.0.0.1:5000/api/health
+#
+# JEV pre-trade gate in QuantDinger Settings → AI / LLM:
+#   JEV_API_KEY=<TYPESAFE key>
+#   JEV_BASE_URL=https://api.typesafe.ai/v1
+#   JEV_MODEL=jev-1.13.0
+#   JEV_TIMEOUT_SECONDS=2
+#
+# Default admin only if vars left default: quantdinger / 123456
+# CHANGE IT before any network exposure. Paper trading first.
+
+version: "3.9"
+
+# Placeholder stack for when Docker Desktop is available.
+# Prefer official installer — this file documents the intended local wiring.
+services:
+  quantdinger-note:
+    image: alpine:3.20
+    container_name: quantdinger-docs
+    command: ["sh", "-c", "echo 'Run official QuantDinger compose — see comments in this file' && sleep infinity"]
+    restart: "no"

@@ -1,0 +1,38 @@
+# Secrets & credentials — NEVER commit
+.env
+.env.*
+secrets/
+*.pem
+key_id.txt
+x_credentials.env
+**/kalshi-private-key.pem
+**/key_id.txt
+
+# Runtime data / logs
+data/
+data/logs/
+*.log
+*.out
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local LIVE marks / kill switches
+LIVE_MARK
+KILL_SWITCH
+KILL
