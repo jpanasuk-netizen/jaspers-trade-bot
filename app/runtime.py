@@ -90,15 +90,6 @@ def market_loop() -> None:
             if edge is None and fair is not None and win.get("yes_mid") is not None:
                 edge = float(fair) - float(win.get("yes_mid") or 0.5)
             signal = None
-            try:
-                ovl = judgment_overlay(btc_research_pack())
-                signal = ovl.get("composite_signal")
-                if fair is None:
-                    fair = ovl.get("fair_yes")
-                if edge is None:
-                    edge = ovl.get("edge_vs_book")
-            except Exception:  # noqa: BLE001
-                pass
             record_tick(
                 price=(spot or {}).get("price"),
                 yes_mid=win.get("yes_mid"),
@@ -141,18 +132,27 @@ def decision_loop() -> None:
                 pass
             last = st.get("last_judgment") or {}
             charts = st.get("charts") or {}
+            ts_err = last.get("typesafe_error")
             print(
                 f"[decision] ok mode={mode} conn={conn} "
                 f"side={last.get('side')} route={last.get('route')} "
-                f"src={last.get('judge_src')} "
-                f"pts={len(charts.get('spot') or [])} err={err}",
+                f"src={last.get('judge_src')} model={last.get('model')} "
+                f"pts={len(charts.get('spot') or [])} err={err}"
+                + (f" typesafe={str(ts_err)[:120]}" if ts_err else ""),
                 flush=True,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[decision] loop error: {exc}", flush=True)
             traceback.print_exc()
         elapsed = time.time() - t0
-        time.sleep(max(1.0, _decision_poll_sec() - elapsed))
+        # Late window: snipe cheap winning-side prints faster.
+        secs = None
+        try:
+            secs = ((st.get("snapshot") or {}).get("window") or {}).get("seconds_left")
+        except Exception:  # noqa: BLE001
+            secs = None
+        wait = 0.6 if secs is not None and float(secs) <= 120 else max(1.0, _decision_poll_sec() - elapsed)
+        time.sleep(max(0.4, wait))
 
 
 def warmup() -> None:

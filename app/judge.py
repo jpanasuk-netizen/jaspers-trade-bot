@@ -66,7 +66,7 @@ def deterministic_judge(mkt: dict[str, Any], sent: dict[str, Any], features: dic
     quality = _clamp(1.0 - toxic - float(features.get("liquidity_stressed_proxy") or 0.0) * 0.4, 0.0, 1.0)
 
     route = "CONTINUE"
-    if conf < config.jev_conf_floor or features.get("data_age_ok") is False:
+    if conf < config.jev_conf_floor:
         route = "SKIP"
     elif float(features.get("bocpd_alarm") or 0) >= 0.85 or features.get("regime") == "crisis":
         route = "ESCALATE" if config.layer2_enabled else "SKIP"
@@ -150,7 +150,7 @@ def _apply_jev_to_shell(jev: dict[str, Any], features: dict[str, Any], sent: dic
         "squeeze_risk_pct": jev.get("squeeze_risk_pct"),
         "catalyst_impact_score": 0.0,
         "signal_quality": jev.get("signal_quality"),
-        "toxic_flow": round(float(features.get("vpin_proxy") or 0.0), 3),
+        "toxic_flow": round(float(jev.get("toxic_flow") if jev.get("toxic_flow") is not None else features.get("vpin_proxy") or 0.0), 3),
         "decision_consistency": jev.get("decision_consistency"),
         "should_escalate": jev.get("should_escalate"),
         "regime_confirm": jev.get("regime_confirm"),
@@ -215,13 +215,18 @@ def judge(force: bool = False) -> dict[str, Any]:
         jev_meta = jev
         if jev.get("ok"):
             j = _apply_jev_to_shell(jev, features, sent)
-            # Attach Layer-1 derived toxic flow if JEV didn't provide numeric toxic
             if j.get("toxic_flow") is None:
                 j["toxic_flow"] = features.get("vpin_proxy")
         else:
             j = deterministic_judge(mkt, sent, features)
             j["typesafe_error"] = jev.get("error") or "jev unavailable"
             j["jev_latency_ms"] = jev.get("latency_ms")
+            if jev.get("hold") or jev.get("judge_src") == "jev_stale":
+                j["side"] = "SKIP"
+                j["action"] = "SKIP"
+                j["route"] = "SKIP"
+                j["trade_action"] = "HOLD"
+                j["reason"] = (j.get("reason") or "") + " | JEV_STALE_HOLD"
     else:
         j = deterministic_judge(mkt, sent, features)
         if not config.typesafe_api_key:

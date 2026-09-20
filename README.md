@@ -4,7 +4,9 @@
 
 Regime-adaptive trading desk for **Kalshi KXBTC15M** (Bitcoin 15-minute YES/NO).
 
-Architecture follows **JEV / TypeSafe System One** + **QuantDinger-BTC** + **Grokbot BTCC** doctrine:
+Public repo: https://github.com/jpanasuk-netizen/jaspers-trade-bot
+
+Architecture follows **JEV / TypeSafe System One** (RohOnChain battery: code computes state, Jev judges, code + risk gate execute) + **QuantDinger-BTC** + **Grokbot BTCC** doctrine:
 
 ```
 Layer 1     deterministic stats (HMM regime, BOCPD, OFI, VPIN, fib/golden pocket, Hurst)

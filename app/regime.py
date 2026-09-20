@@ -155,7 +155,9 @@ def build_layer1_state(
     )
 
     seconds_left = win.get("seconds_left")
-    data_age_ok = seconds_left is None or float(seconds_left) > 8.0
+    # 1s poll desk: last seconds of the window are still a live market, not "stale".
+    # Only treat as dead once the window is closed.
+    data_age_ok = seconds_left is None or float(seconds_left) > 0.0
 
     features = {
         "ts": time.time(),

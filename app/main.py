@@ -21,14 +21,18 @@ HISTORY_PATH = Path(__file__).with_name("history.html")
 
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, payload: Any) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    handler.send_response(code)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.end_headers()
-    handler.wfile.write(body)
+    body = json.dumps(payload, default=str, separators=(",", ":")).encode("utf-8")
+    try:
+        handler.send_response(code)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        return
 
 
 def _html_response(handler: BaseHTTPRequestHandler, html: str) -> None:
@@ -41,11 +45,18 @@ def _html_response(handler: BaseHTTPRequestHandler, html: str) -> None:
     handler.wfile.write(body)
 
 
+class DeskServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+    request_queue_size = 64
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Jev15mKalshi/1.0"
+    protocol_version = "HTTP/1.0"
 
-    def log_message(self, fmt: str, *args: Any) -> None:  # quieter desk logs
-        print(f"[http] {self.address_string()} {fmt % args}", flush=True)
+    def log_message(self, fmt: str, *args: Any) -> None:
+        return  # access log was filling the pipe and stalling every request
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)
@@ -128,8 +139,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             _json_response(self, 404, {"ok": False, "error": f"no route {path}"})
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
         except Exception as exc:  # noqa: BLE001
-            _json_response(self, 500, {"ok": False, "error": str(exc), "trace": traceback.format_exc()[-400:]})
+            _json_response(self, 500, {"ok": False, "error": str(exc)[:200]})
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -159,6 +172,19 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 500, {"ok": False, "error": str(exc)})
 
 
+def _wsl_ip() -> str:
+    try:
+        import socket
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:  # noqa: BLE001
+        return "127.0.0.1"
+
+
 def _loop() -> None:
     """Legacy fallback loop — production uses app.runtime."""
     print(f"[loop] desk poll every {config.poll_sec:.0f}s  stake=${config.stake_usd:.2f}  "
@@ -184,21 +210,34 @@ def main() -> None:
     print(f"  HUD   http://{config.host}:{config.port}/", flush=True)
     print(f"  Keys  typesafe={bool(config.typesafe_api_key)}  qd={config.quantdinger_base_url}", flush=True)
     print("=" * 64, flush=True)
-    runtime.warmup()
-    runtime.start_background()
-    server = ThreadingHTTPServer((config.host, config.port), Handler)
+    from multiprocessing import Process
+
+    from .hud_http import serve as serve_hud
+
+    http_proc = Process(
+        target=serve_hud,
+        kwargs={"host": "0.0.0.0", "port": int(config.port)},
+        name="hud-http",
+        daemon=True,
+    )
+    http_proc.start()
+    print(f"  HTTP  http://127.0.0.1:{config.port}/  (WSL {_wsl_ip()}:{config.port})", flush=True)
     mode = "LIVE" if live_armed() else "PAPER"
     print(f"  MODE  {mode}   series={config.series_ticker}   stake=${config.stake_usd:.2f}", flush=True)
     print(f"  Gates conf>={config.conf_floor}  entry<={config.entry_ceil}  lean={config.trade_on_lean}", flush=True)
     print(f"  Keys  typesafe={bool(config.typesafe_api_key)}  twitter={bool(config.twitter_api_key)}", flush=True)
     print(f"  Arm   echo live > {config.live_mark}   (kill: delete the file)", flush=True)
     print("=" * 64, flush=True)
+    runtime.warmup()
+    runtime.start_background()
     try:
-        server.serve_forever()
+        while http_proc.is_alive():
+            time.sleep(1.0)
     except KeyboardInterrupt:
         print("\n[main] shutdown", flush=True)
     finally:
-        server.server_close()
+        if http_proc.is_alive():
+            http_proc.terminate()
 
 
 if __name__ == "__main__":

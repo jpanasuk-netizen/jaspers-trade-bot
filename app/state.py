@@ -1,6 +1,7 @@
 """Shared desk state for the :3000 trading-blocks HUD."""
 from __future__ import annotations
 
+import json
 import threading
 import time
 from typing import Any
@@ -42,77 +43,126 @@ def touch_market(snap: dict[str, Any]) -> None:
         }
         if _STATE.get("connection") in {None, "connecting", "reconnecting"}:
             _STATE["connection"] = "live"
+    _write_hud_file()
 
 
-def current() -> dict[str, Any]:
-    quant: dict[str, Any] = {}
-    qd: dict[str, Any] = {}
-    charts: dict[str, Any] = {}
+def _hud_extras() -> dict[str, Any]:
+    """Heavy panels — computed on the market/decision loops, not per HTTP GET."""
+    extras: dict[str, Any] = {}
     try:
         from .quant import desk_quant_snapshot
 
-        quant = desk_quant_snapshot()
+        extras["quant"] = desk_quant_snapshot()
     except Exception as exc:  # noqa: BLE001
-        quant = {"error": str(exc)[:120]}
+        extras["quant"] = {"error": str(exc)[:120]}
     try:
-        from .quantdinger import btc_research_pack, probe_quantdinger
+        from .quantdinger import btc_research_pack
 
-        qd = btc_research_pack()
+        extras["quantdinger"] = btc_research_pack()
     except Exception as exc:  # noqa: BLE001
-        qd = {"error": str(exc)[:120]}
+        extras["quantdinger"] = {"error": str(exc)[:120]}
     try:
         from .chart_data import chart_series
 
-        charts = chart_series()
+        extras["charts"] = chart_series()
     except Exception as exc:  # noqa: BLE001
-        charts = {"error": str(exc)[:80]}
-    btcc: dict[str, Any] = {}
+        extras["charts"] = {"error": str(exc)[:80]}
     try:
         from .btcc_knowledge import btcc_signal_board
 
-        btcc = btcc_signal_board()
+        extras["btcc"] = btcc_signal_board()
     except Exception as exc:  # noqa: BLE001
-        btcc = {"error": str(exc)[:120]}
+        extras["btcc"] = {"error": str(exc)[:120]}
+    return extras
+
+
+def _slim_judgment(j: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(j, dict):
+        return {}
+    return {
+        "side": j.get("side"),
+        "conf": j.get("conf"),
+        "route": j.get("route"),
+        "judge_src": j.get("judge_src"),
+        "reason": str(j.get("reason") or "")[:180],
+        "spot": j.get("spot"),
+        "open_of_window": j.get("open_of_window"),
+        "delta_from_open": j.get("delta_from_open"),
+        "fair_yes": (j.get("quantdinger") or {}).get("fair_yes") or j.get("fair_yes"),
+    }
+
+
+def _slim_spin(s: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(s, dict):
+        return {}
+    return {
+        "ts": s.get("ts"),
+        "result": s.get("result"),
+        "side": s.get("side"),
+        "reason": str(s.get("reason") or s.get("spin_reason") or "")[:220],
+        "stake_usd": s.get("stake_usd"),
+        "entry": s.get("entry"),
+        "mode": s.get("mode"),
+        "ticker": s.get("ticker"),
+    }
+
+
+def current() -> dict[str, Any]:
+    """Small HUD payload so the browser can actually paint."""
     with _LOCK:
+        extras = dict(_STATE.get("hud_extras") or {})
+        snap = _STATE.get("snapshot") or {}
+        win = (snap.get("window") if isinstance(snap, dict) else {}) or {}
+        spot = (snap.get("spot") if isinstance(snap, dict) else {}) or {}
         return {
             "started_at": _STATE["started_at"],
             "connection": _STATE["connection"],
             "latest": _STATE["latest"],
-            "events": list(_STATE["events"][-80:]),
-            "last_spin": _STATE["last_spin"],
-            "last_judgment": _STATE["last_judgment"],
-            "snapshot": _STATE["snapshot"],
+            "events": list(_STATE["events"][-12:]),
+            "last_spin": _slim_spin(_STATE["last_spin"]),
+            "last_judgment": _slim_judgment(_STATE["last_judgment"]),
+            "snapshot": {
+                "window": {
+                    "ticker": win.get("ticker"),
+                    "seconds_left": win.get("seconds_left"),
+                    "yes_ask": win.get("yes_ask"),
+                    "no_ask": win.get("no_ask"),
+                    "yes_mid": win.get("yes_mid"),
+                    "yes_bid": win.get("yes_bid"),
+                    "open_of_window": win.get("open_of_window"),
+                },
+                "spot": {"price": spot.get("price"), "source": spot.get("source")},
+                "fast_feed": snap.get("fast_feed") if isinstance(snap, dict) else None,
+            },
             "scoreboard": _STATE["scoreboard"],
             "error": _STATE["error"],
             "market_fresh": _STATE.get("market_fresh"),
-            "quant": quant,
-            "quantdinger": qd,
-            "btcc": btcc,
-            "charts": charts,
+            "quant": extras.get("quant") or {},
+            "quantdinger": extras.get("quantdinger") or {},
+            "btcc": extras.get("btcc") or {},
+            "charts": extras.get("charts") or {},
             "meta": {
                 "model": "jev-15m-kalshi",
-                "architecture": getattr(config, "architecture", "jev-regime-adaptive"),
-                "jevModel": getattr(config, "typesafe_model", "jev-1.13.0"),
-                "jevEnabled": getattr(config, "jev_enabled", True),
-                "layer2Enabled": getattr(config, "layer2_enabled", False),
                 "market": config.series_ticker,
                 "dryRun": not spin.live_armed(),
                 "liveTrading": spin.live_armed(),
-                "stakeUsd": config.stake_usd,
-                "host": config.host,
+                "host": "0.0.0.0",
                 "port": config.port,
-                "typesafeConfigured": bool(config.typesafe_api_key),
-                "twitterConfigured": bool(
-                    getattr(config, "twitter_api_key", "")
-                    or getattr(config, "twitter_bearer", "")
-                    or getattr(config, "twitter_access_token", "")
-                ),
                 "martingale": getattr(config, "martingale_enabled", False),
                 "martingaleTarget": getattr(config, "martingale_target", 6.0),
-                "retryStake": getattr(config, "retry_stake_usd", 2.0),
-                "baseStake": getattr(config, "base_stake_usd", 0.05),
             },
         }
+
+
+def _write_hud_file() -> None:
+    try:
+        payload = current()
+        path = config.data_dir / "hud.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, default=str, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        return
 
 
 def _build_block_event(j: dict[str, Any], mkt: dict[str, Any], spin_rec: dict[str, Any] | None) -> dict[str, Any]:
@@ -228,6 +278,7 @@ def tick(do_spin: bool = True) -> dict[str, Any]:
             _STATE["latest"] = event
             _STATE["events"] = (_STATE["events"] + [event])[-200:]
             _STATE["error"] = None
+        _write_hud_file()
         return current()
     except Exception as exc:  # noqa: BLE001
         with _LOCK:

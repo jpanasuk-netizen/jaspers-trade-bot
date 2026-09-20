@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Configure QuantDinger env + pull GHCR stack inside WSL."""
 from pathlib import Path
+import os
 import re
 import secrets
 import subprocess
@@ -23,10 +24,9 @@ rd = secrets.token_hex(16)
 cr = secrets.token_hex(16)
 gf = secrets.token_hex(16)
 admin_pw = secrets.token_urlsafe(12) + "Aa1!"
-typesafe = (
-    "apikey_219db64f2974edb429a8a2818ba99e053e2_"
-    "60fde42c57e53d1e6aafda8e76f93dc0cf3f0c812d177797ddbdcbb5f0530e80"
-)
+typesafe = (os.environ.get("TYPESAFE_API_KEY") or "").strip()
+if not typesafe:
+    print("TYPESAFE_API_KEY not set — skipping JEV keys in backend.env", file=sys.stderr)
 
 env_path = root / ".env"
 if not env_path.exists():
@@ -55,23 +55,24 @@ bt = be.read_text()
 for k, v in {
     "SECRET_KEY": sk,
     "CREDENTIAL_ENCRYPTION_KEY": ck,
-    "ADMIN_USER": "jpana",
+    "ADMIN_USER": os.environ.get("QD_ADMIN_USER", "admin"),
     "ADMIN_PASSWORD": admin_pw,
     "REDIS_PASSWORD": rd,
     "CELERY_REDIS_PASSWORD": cr,
-    "JEV_API_KEY": typesafe,
     "JEV_BASE_URL": "https://api.typesafe.ai/v1",
     "JEV_MODEL": "jev-1.13.0",
     "JEV_TIMEOUT_SECONDS": "2",
 }.items():
     bt = setk(bt, k, v)
+if typesafe:
+    bt = setk(bt, "JEV_API_KEY", typesafe)
 be.write_text(bt)
 
 (root / "DESK_ADMIN.txt").write_text(
-    f"ADMIN_USER=jpana\nADMIN_PASSWORD={admin_pw}\nWEB=http://127.0.0.1:8888\nAPI=http://127.0.0.1:5000/api/health\n"
+    f"ADMIN_USER={os.environ.get('QD_ADMIN_USER', 'admin')}\nADMIN_PASSWORD={admin_pw}\nWEB=http://127.0.0.1:8888\nAPI=http://127.0.0.1:5000/api/health\n"
 )
 print("wrote env")
-print("ADMIN_USER=jpana")
+print("ADMIN_USER=" + os.environ.get("QD_ADMIN_USER", "admin"))
 print("ADMIN_PASSWORD=" + admin_pw)
 print("--- compose up ---")
 r = subprocess.run(

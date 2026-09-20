@@ -1,7 +1,11 @@
 """Layer 1.5 — JEV (TypeSafe System One) fast typed judgment battery.
 
-Jev filters and triages. It does not replace Layer 1 (deterministic stats),
-Layer 2 (multi-agent reasoning), or execution. One batched call, typed answers.
+Blueprint: RohOnChain https://x.com/RohOnChain/status/2101311813908652069
+  Code computes state. Jev interprets with a parallel battery. Code applies
+  policy. Hard risk vetoes never go to the model. Direct api.typesafe.ai.
+  If the call is not back before the next loop, HOLD.
+
+Jev does not replace Layer 1 (deterministic stats), Layer 2, or execution.
 """
 from __future__ import annotations
 
@@ -140,8 +144,19 @@ def build_battery_questions() -> dict[str, Any] | None:
             criteria={
                 "trending": "Directional continuation is the dominant structure.",
                 "mean_reverting": "Chop / fade / range is the dominant structure.",
+                "chaotic": "No stable structure; book and flow disagree.",
                 "high_vol": "Volatility expansion without a clean directional edge.",
                 "crisis": "Disorderly move, panic/euphoria, or stress regime.",
+            },
+        ),
+        "toxic_flow": Noul(
+            instructions=(
+                "Is current flow informed/toxic (adverse selection) rather than noise, "
+                "given `layer1_stats.vpin_proxy`, `ofi_proxy`, and `kalshi` book?"
+            ),
+            criteria={
+                "true": "Informed/toxic flow — do not take the other side blindly.",
+                "false": "Noise or uninformed flow.",
             },
         ),
         # News / social relevance
@@ -261,6 +276,8 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
 
     state = build_jev_state(features, social_sample)
     model = config.typesafe_model  # pin; do not use moving alias for thresholds
+    timeout = max(0.2, float(getattr(config, "jev_timeout_sec", 0.8)))
+    base_url = getattr(config, "typesafe_base_url", "https://api.typesafe.ai") or "https://api.typesafe.ai"
 
     try:
         from typesafe_sdk import TypeSafeClient  # type: ignore
@@ -268,20 +285,31 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
         import os
 
         os.environ.setdefault("TYPESAFE_API_KEY", config.typesafe_api_key)
+        os.environ.setdefault("TYPESAFE_BASE_URL", base_url)
+        kw: dict[str, Any] = {"api_key": config.typesafe_api_key, "timeout": timeout, "base_url": base_url}
         try:
-            client = TypeSafeClient(api_key=config.typesafe_api_key)
+            from typesafe_sdk import RetryPolicy  # type: ignore
+
+            kw["retry"] = RetryPolicy(max_retries=0)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            client = TypeSafeClient(**kw)
         except TypeError:
-            client = TypeSafeClient()
+            client = TypeSafeClient(api_key=config.typesafe_api_key)
         with client as c:
             try:
-                response = c.system_one(state=state, questions=questions, model=model)
+                response = c.system_one(state=state, questions=questions, model=model, timeout=timeout)
             except TypeError:
                 response = c.system_one(state=state, questions=questions)
     except Exception as exc:  # noqa: BLE001
+        name = type(exc).__name__
+        stale = "timeout" in name.lower() or "timeout" in str(exc).lower()
         return {
             "ok": False,
-            "judge_src": "jev_error",
+            "judge_src": "jev_stale" if stale else "jev_error",
             "error": str(exc)[:240],
+            "hold": True if stale else False,
             "latency_ms": (time.time() - t0) * 1000.0,
         }
 
@@ -296,6 +324,7 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
     consist_p = _noul_payload(answers.get("decision_consistent"), 0.5)
     escalate_p = _noul_payload(answers.get("should_escalate"), 0.2)
     squeeze_p = _noul_payload(answers.get("is_short_squeeze_risk"), 0.15)
+    toxic_p = _noul_payload(answers.get("toxic_flow"), float(features.get("vpin_proxy") or 0.0))
     quality_f, quality_label = _score_payload(
         answers.get("signal_quality"),
         ["Toxic / adverse — do not trade", "Weak / noisy setup", "Acceptable setup", "Clean high-quality setup"],
@@ -327,12 +356,13 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
 
     # Confidence-gated routing (code owns policy)
     # Architecture: CONTINUE | ESCALATE | SKIP
-    triggers_ok = bool(features.get("data_age_ok", True))
     conf_ok = conf >= config.jev_conf_floor
     consist_ok = consist_p >= config.jev_consistency_min
     quality_ok = quality_f >= config.signal_quality_min
-    escalate = escalate_p >= config.jev_escalate_prob or not triggers_ok
-    if not conf_ok or not consist_ok or side_raw == "SKIP":
+    toxic_ok = toxic_p <= config.toxic_flow_max
+    # Late window is not an escalate trigger on a 1s poller.
+    escalate = escalate_p >= config.jev_escalate_prob
+    if not conf_ok or not consist_ok or side_raw == "SKIP" or not toxic_ok:
         route = "SKIP"
     elif escalate:
         route = "ESCALATE"
@@ -395,6 +425,8 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
         "sentiment_label": sent_label,
         "sentiment_score": sent_f,
         "squeeze_risk_pct": round(squeeze_p * 100.0, 1),
+        "toxic_flow": round(toxic_p, 3),
+        "blueprint": "RohOnChain/2101311813908652069",
         "polarity_score": float(features.get("polarity_score") or 0.0),
         "reason": (
             f"jev {used_model} route={route} side={side_raw} "
@@ -406,6 +438,8 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
             "route": route,
             "latency_ms": round(latency_ms, 1),
             "questions": list(questions.keys()),
+            "api": "https://api.typesafe.ai/v1/systemone",
+            "blueprint": "RohOnChain/2101311813908652069",
         },
         "raw_answers": {
             k: {

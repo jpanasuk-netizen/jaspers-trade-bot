@@ -175,7 +175,7 @@ def _fetch_spot_race() -> dict[str, Any]:
     return best
 
 
-MIN_TRADE_SECS = 8.0  # match risk-gate data_freshness
+MIN_TRADE_SECS = 0.0  # 1s poll desk: fire while the window is still open
 MAX_CURRENT_SECS = 16 * 60.0  # current 15m + 1m slack
 
 

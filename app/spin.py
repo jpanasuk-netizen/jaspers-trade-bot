@@ -324,6 +324,113 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         rec["spun"] = True
         return rec
 
+    cash_now = float(plan.get("cash") or 0)
+    target = float(plan.get("target") or config.martingale_target)
+    recover = bool(
+        mode == "LIVE"
+        and config.martingale_enabled
+        and cash_now > 0
+        and cash_now < target
+    )
+
+    if recover:
+        # Pennies-back: buy the cheapest 1-lot we can actually pay. Judge SKIP
+        # / conf floor do not sit on 3¢ — that's how we climb to $6.
+        try:
+            from . import kalshi_live
+
+            shard_cash = kalshi_live.ensure_shard_funds(
+                *kalshi_live.load_creds(),
+                dest_shard=int(active.get("exchange_index") or config.kalshi_exchange_index or 2),
+                min_dollars=0.04,
+            )
+            cash_f = float((shard_cash or {}).get("dest_cash") or cash_now or 0)
+            pick = kalshi_live.cheapest_affordable(active, cash_f)
+            # Only the side that can pay: YES if spot is above open, NO if below.
+            spot = j.get("spot")
+            open_px = j.get("open_of_window") or active.get("open_of_window")
+            fair = None
+            try:
+                fair = float((j.get("quantdinger") or {}).get("fair_yes") or j.get("fair_yes") or 0)
+                if fair <= 0:
+                    fair = None
+            except (TypeError, ValueError):
+                fair = None
+            lead = None
+            if fair is not None:
+                lead = "YES" if fair >= 0.55 else ("NO" if fair <= 0.45 else None)
+            if lead is None and spot is not None and open_px:
+                try:
+                    lead = "YES" if float(spot) > float(open_px) else "NO"
+                except (TypeError, ValueError):
+                    lead = None
+            if pick and lead and pick["side"] != lead:
+                rec["result"] = "SKIP_NO_EDGE"
+                rec["reason"] = (
+                    f"cheap {pick['side']} @ {pick['ask']} is the dying side. "
+                    f"lead={lead} fair={fair} spot={spot} open={open_px}. "
+                    f"wait for the winning side to get cheap enough to buy."
+                )
+                rec["quote"] = pick
+                rec["lead"] = lead
+                _append(paths["ledger"], rec)
+                return rec
+            if pick and cash_f + 1e-9 >= pick["need"] and (lead is None or pick["side"] == lead):
+                rec["recover_fire"] = True
+                rec["side"] = pick["side"]
+                rec["entry"] = pick["ask"]
+                rec["stake_usd"] = pick["need"]
+                rec["win_pay"] = round(1.0 - float(pick["ask"]), 4)
+                rec["conf"] = rec.get("conf")
+                rec["spin_reason"] = (
+                    f"recover 1-lot {pick['side']} @ {pick['ask']:.2f}+fee {pick['fee']:.2f} "
+                    f"= ${pick['need']:.2f} (win ${1-pick['ask']:.2f}) cash ${cash_f:.4f}"
+                )
+                rec["quote"] = pick
+                rec["shard"] = shard_cash
+                rec["mode"] = "LIVE"
+                try:
+                    result = kalshi_live.place_order(
+                        ticker=ticker, side=pick["side"], market=active, stake_usd=pick["need"]
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    rec["result"] = "LIVE_ERROR"
+                    rec["error"] = str(exc)[:400]
+                    _append(paths["ledger"], rec)
+                    _touch_scoreboard(rec)
+                    return rec
+                rec["live"] = {
+                    k: result.get(k)
+                    for k in ("filled", "fill_count", "price", "book_side", "count", "est_cost", "error")
+                    if k in result
+                }
+                rec["filled"] = bool(result.get("filled"))
+                rec["result"] = "LIVE_FILLED" if rec["filled"] else "LIVE_SENT_NO_FILL"
+                if rec["filled"]:
+                    mark_spun(ticker)
+                    try:
+                        from . import martingale as mg
+
+                        mg.note_fill(float(pick["need"]), mg.kalshi_cash())
+                    except Exception:  # noqa: BLE001
+                        pass
+                _append(paths["ledger"], rec)
+                _touch_scoreboard(rec)
+                return rec
+            src = pick or {}
+            rec["result"] = "SKIP_WIN_TOO_SMALL"
+            rec["reason"] = (
+                f"pennies ready (${cash_f:.4f}) but no 1-lot we can buy. "
+                f"cheapest {src.get('side')} @ {src.get('ask')} need ${src.get('need')}."
+            )
+            rec["quote"] = src
+            rec["shard"] = shard_cash
+            _append(paths["ledger"], rec)
+            return rec
+        except Exception as exc:  # noqa: BLE001
+            rec["recover_error"] = str(exc)[:240]
+            # fall through to normal path
+
     if stake is not None and stake < 0.01 and plan.get("mode") == "double_down":
         rec["result"] = "SKIP_NO_CASH"
         rec["reason"] = f"stake {stake:.4f} too small / no cash on ex{config.kalshi_exchange_index}"

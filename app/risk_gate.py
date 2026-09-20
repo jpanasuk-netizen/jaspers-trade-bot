@@ -119,21 +119,31 @@ def evaluate_risk_gate(
         f"liq={liq:.3f}",
     )
 
-    # Stale state / block deadline
+    # Window still open = live. A 1s poller will often arrive with 1–7s left;
+    # that is not stale. If Jev already said YES/NO, fire while the market exists.
+    secs = features.get("seconds_left")
+    try:
+        secs_f = float(secs) if secs is not None else None
+    except (TypeError, ValueError):
+        secs_f = None
+    jev_fire = side in {"YES", "NO"} and str(judgment.get("judge_src") or "").startswith("jev")
+    window_open = secs_f is None or secs_f > 0.0
     add(
         "data_freshness",
-        bool(features.get("data_age_ok", True)),
-        "state not stale for window",
-        f"seconds_left={features.get('seconds_left')}",
+        window_open if jev_fire else (bool(features.get("data_age_ok", True)) or window_open),
+        "window still open (1s poll; Jev fire allowed into the close)",
+        f"seconds_left={secs}",
     )
 
-    # Decision latency budget
+    # Decision latency: HFT deadline does not apply. If Jev already answered
+    # FIRE, place it — 1s poll + ~1s TypeSafe RTT routinely exceeds 1500ms.
     if decision_latency_ms is not None:
+        lat_ok = decision_latency_ms <= config.max_decision_latency_ms or jev_fire
         add(
             "decision_latency",
-            decision_latency_ms <= config.max_decision_latency_ms,
-            f"latency <= {config.max_decision_latency_ms}ms",
-            f"{decision_latency_ms:.0f}ms",
+            lat_ok,
+            f"latency <= {config.max_decision_latency_ms}ms or Jev FIRE",
+            f"{decision_latency_ms:.0f}ms jev_fire={jev_fire}",
         )
 
     # Escalation without Layer-2 reasoning → hold (architecture: escalate then risk)

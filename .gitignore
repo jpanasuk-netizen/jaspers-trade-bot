@@ -1,6 +1,7 @@
 # Secrets & credentials — NEVER commit
 .env
 .env.*
+!.env.example
 secrets/
 *.pem
 key_id.txt
@@ -36,3 +37,6 @@ Thumbs.db
 LIVE_MARK
 KILL_SWITCH
 KILL
+
+# One-off local probes
+scripts/_*.py
