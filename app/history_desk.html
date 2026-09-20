@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jasper's Trade Bot · History :3002</title>
+<style>
+:root {
+  --bg:#FFF; --panel:#F5F4F1; --border:#ECECEA;
+  --ink:#0A0A0A; --ink2:#3C3C38; --muted:#77776F;
+  --yes:#0B7A48; --no:#C2402F; --mid:#A16207; --live:#4C3EBB;
+  --yes-dim:#D9EEE3; --no-dim:#F9DED6; --hold:#E3E1DA; --live-dim:#E4E0F7;
+  --mono:"Cascadia Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#EBE8E2;color:var(--ink);font-family:var(--sans);font-size:14px}
+.page{max-width:1600px;margin:10px auto 40px;padding:0 10px}
+.head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--bg);border:1px solid var(--border);border-radius:16px;padding:12px 16px;margin-bottom:10px}
+.brand{font-weight:800;letter-spacing:.02em}
+.chip{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:4px 10px}
+a.chip{color:var(--ink2);text-decoration:none}
+.chip.live{background:var(--live-dim);color:var(--live);font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px}
+.kpi{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:10px 12px}
+.kpi .l{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.kpi .v{font-family:var(--mono);font-size:20px;font-weight:700;margin-top:4px}
+.kpi .s{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:8px;margin-bottom:10px}
+@media(max-width:980px){.grid{grid-template-columns:1fr}}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
+.card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.bars .row{display:grid;grid-template-columns:180px 1fr 48px;gap:8px;align-items:center;margin:4px 0;font-family:var(--mono);font-size:11px}
+.bars .bar{height:10px;background:var(--hold);border-radius:99px;overflow:hidden}
+.bars .bar>i{display:block;height:100%;background:var(--live)}
+.dl{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;font-family:var(--mono);font-size:12px}
+.dl dt{color:var(--muted)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+select,input[type=search]{font-family:var(--mono);font-size:12px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:#fff}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+tr:hover td{background:#FAFAF8}
+.YES{color:var(--yes);font-weight:700}
+.NO{color:var(--no);font-weight:700}
+.SKIP,.SKIP_CONF,.SKIP_EDGE,.SKIP_NO_CASH,.SKIP_STAKE_TOO_SMALL,.SKIP_WIN_TOO_SMALL,.RISK_GATE_BLOCK,.ALREADY_SPUN,.SKIP_ENTRY,.SKIP_NO_QUOTE{color:var(--mid)}
+.LIVE_FILLED,.PAPER_FILLED{background:var(--yes-dim);font-weight:700}
+.LIVE_SENT_NO_FILL,.LIVE_ERROR{background:var(--no-dim)}
+.reason{color:var(--muted);max-width:360px;word-break:break-word}
+.empty{padding:40px;text-align:center;color:var(--muted);font-family:var(--mono)}
+.tablewrap{background:var(--bg);border:1px solid var(--border);border-radius:14px;overflow:auto;max-height:70vh}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="head">
+    <span class="brand">Jasper's Trade Bot · history</span>
+    <span class="chip" id="port">:3002</span>
+    <span class="chip" id="armed">—</span>
+    <a class="chip" href="http://127.0.0.1:3000/" target="_blank">live desk :3000</a>
+    <span class="chip" id="range">—</span>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div class="card">
+      <h2>Results</h2>
+      <div class="bars" id="results"></div>
+    </div>
+    <div class="card">
+      <h2>Martingale · climb to $6</h2>
+      <dl class="dl" id="mart"></dl>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:10px">
+    <h2>Ledger</h2>
+    <div class="filters">
+      <select id="fResult"><option value="">all results</option></select>
+      <select id="fSide">
+        <option value="">all sides</option>
+        <option>YES</option><option>NO</option><option>SKIP</option>
+      </select>
+      <select id="fMode">
+        <option value="">all modes</option>
+        <option>LIVE</option><option>PAPER</option>
+      </select>
+      <input type="search" id="fQ" placeholder="ticker / reason" />
+      <span class="chip" id="shown">0 shown</span>
+    </div>
+    <div class="tablewrap" id="table"><div class="empty">loading ledger…</div></div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+function cls(s){ return String(s||"").replace(/[^A-Z0-9_]/g,""); }
+function fmtTs(t){
+  if(!t) return "—";
+  const d = new Date(t);
+  if(Number.isNaN(d.getTime())) return String(t).slice(0,19);
+  return d.toLocaleString();
+}
+function n(v, d){ if(v==null||v==="") return "—"; const x=+v; return Number.isFinite(x)?x.toFixed(d):String(v); }
+function money(v){ if(v==null||v==="") return "—"; return "$"+(+v).toFixed(4); }
+
+async function summary(){
+  const r = await fetch("/api/summary?ts="+Date.now(), {cache:"no-store"});
+  const d = await r.json();
+  $("armed").textContent = d.liveArmed ? "LIVE ARMED" : "PAPER";
+  $("armed").className = "chip" + (d.liveArmed?" live":"");
+  $("range").textContent = (d.first_ts?fmtTs(d.first_ts):"—") + "  →  " + (d.last_ts?fmtTs(d.last_ts):"—");
+  const sb = d.scoreboard || {};
+  const mg = d.martingale || {};
+  const kpis = [
+    ["decisions", d.n, d.modes && JSON.stringify(d.modes).slice(0,40)],
+    ["fills", d.fills, sb.lastFill ? (sb.lastFill.side+" "+sb.lastFill.ticker) : "none yet"],
+    ["windows", d.windows, "unique KXBTC15M"],
+    ["mean conf", d.mean_conf!=null ? d.mean_conf.toFixed(3) : "—", "judge"],
+    ["cash", mg.cash_now!=null ? "$"+Number(mg.cash_now).toFixed(4) : "—", mg.reason||""],
+    ["rung", mg.rung ?? 0, "next 2× until $"+Number(mg.target||6).toFixed(0)],
+    ["last result", sb.lastResult||"—", sb.lastSide||""],
+    ["scoreboard fills", sb.fills||0, "wins "+(sb.wins||0)+" / losses "+(sb.losses||0)],
+  ];
+  $("kpis").innerHTML = kpis.map(([l,v,s]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s||""}</div></div>`).join("");
+  const res = d.results || {};
+  const max = Math.max(1, ...Object.values(res));
+  const keys = Object.keys(res);
+  $("fResult").innerHTML = '<option value="">all results</option>' + keys.map(k=>`<option>${k}</option>`).join("");
+  $("results").innerHTML = keys.map(k => {
+    const c = res[k];
+    const pct = Math.round(c/max*100);
+    return `<div class="row"><span>${k}</span><div class="bar"><i style="width:${pct}%"></i></div><span>${c}</span></div>`;
+  }).join("") || "<div class='empty'>no rows</div>";
+  $("mart").innerHTML = [
+    ["mode", mg.mode],
+    ["cash", mg.cash_now],
+    ["target", mg.target],
+    ["last stake", mg.last_stake],
+    ["rung", mg.rung],
+    ["win streak", mg.win_streak],
+    ["loss streak", mg.loss_streak],
+    ["retry at $6", mg.retry_stake],
+    ["updated", mg.updated_at],
+    ["reason", mg.reason],
+  ].map(([k,v]) => `<dt>${k}</dt><dd>${v==null||v===""?"—":v}</dd>`).join("");
+  return d;
+}
+
+async function ledger(){
+  const result = $("fResult").value;
+  const side = $("fSide").value;
+  const mode = $("fMode").value;
+  const q = ($("fQ").value||"").toLowerCase();
+  const url = "/api/history?limit=500"
+    + (result?("&result="+encodeURIComponent(result)):"")
+    + (side?("&side="+encodeURIComponent(side)):"")
+    + (mode?("&mode="+encodeURIComponent(mode)):"");
+  const r = await fetch(url+"&ts="+Date.now(), {cache:"no-store"});
+  const d = await r.json();
+  let rows = d.rows || [];
+  if(q){
+    rows = rows.filter(x => (String(x.ticker||"")+" "+String(x.reason||"")+" "+String(x.result||"")).toLowerCase().includes(q));
+  }
+  $("shown").textContent = rows.length + " shown";
+  if(!rows.length){ $("table").innerHTML = '<div class="empty">no matching decisions</div>'; return; }
+  const tr = rows.map(x => "<tr>"
+    +"<td>"+fmtTs(x.ts)+"</td>"
+    +"<td>"+(x.mode||"—")+"</td>"
+    +"<td>"+(x.ticker||"—")+"</td>"
+    +"<td class='"+(x.side||"")+"'>"+(x.side||"—")+"</td>"
+    +"<td class='"+cls(x.result)+"'>"+(x.result||"—")+"</td>"
+    +"<td>"+n(x.conf,3)+"</td>"
+    +"<td>"+n(x.edge,3)+"</td>"
+    +"<td>"+n(x.entry,3)+"</td>"
+    +"<td>"+money(x.stake_usd)+"</td>"
+    +"<td>"+n(x.yes_ask,3)+" / "+n(x.no_ask,3)+"</td>"
+    +"<td>"+n(x.spot,1)+"</td>"
+    +"<td>"+n(x.delta_from_open,1)+"</td>"
+    +"<td>"+(x.judge_src||"—")+"</td>"
+    +"<td>"+(x.win_pay!=null?n(x.win_pay,2):"—")+"</td>"
+    +"<td class='reason'>"+(x.reason||"")+"</td>"
+    +"</tr>").join("");
+  $("table").innerHTML = "<table><thead><tr>"
+    +"<th>time</th><th>mode</th><th>ticker</th><th>side</th><th>result</th>"
+    +"<th>conf</th><th>edge</th><th>entry</th><th>stake</th><th>yes/no ask</th>"
+    +"<th>spot</th><th>Δ open</th><th>judge</th><th>win $</th><th>reason</th>"
+    +"</tr></thead><tbody>"+tr+"</tbody></table>";
+}
+
+async function tick(){
+  try { await summary(); await ledger(); }
+  catch(e){ $("table").innerHTML = '<div class="empty">'+e+'</div>'; }
+}
+["fResult","fSide","fMode"].forEach(id => $(id).addEventListener("change", ledger));
+$("fQ").addEventListener("input", ledger);
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

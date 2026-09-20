@@ -112,7 +112,7 @@ canvas.chart.tall{height:140px}
     <span>fills <strong id="fills">0</strong></span>
     <span>pnl <strong id="pnl">$0.00</strong></span>
     <span>pts <strong id="pts">0</strong></span>
-    <span>target <strong id="target">$6</strong></span>
+    <span>target <strong id="target">$6 double</strong></span>
   </div>
 
   <nav class="tabs" id="deskTabs">
@@ -412,12 +412,18 @@ function drawCalib(bins){
     ctx.arc(x,y,3+(b.n||1)*0.12,0,Math.PI*2); ctx.fill();
   });
 }
-function renderModelBars(dec,qd,b){
-  const models=(qd&&qd.models)||{};
+function renderModelBars(dec,qd,b,extra){
+  extra=extra||{};
+  const models=(qd&&qd.models)||(qd&&qd.btc&&qd.btc.models)||{};
+  const fair=models.fair_yes!=null?models.fair_yes:extra.fair;
+  const book=models.book_yes!=null?models.book_yes:extra.book;
+  let composite=models.composite_signal;
+  if(composite==null&&fair!=null&&book!=null) composite=0.65*(+fair)+0.35*(+book);
+  else if(composite==null) composite=extra.composite;
   const rows=[
-    ["QD composite",models.composite_signal,"#4C3EBB"],
-    ["Fair YES",models.fair_yes,"#0FA968"],
-    ["Book YES",models.book_yes,"#E4573D"],
+    ["QD composite",composite,"#4C3EBB"],
+    ["Fair YES",fair,"#0FA968"],
+    ["Book YES",book,"#E4573D"],
     ["BTCC conf",b.confidence,"#C98A1B"],
     ["Judge conf",dec.conf,"#4C3EBB"],
     ["Signal q",dec.signal_quality,"#0FA968"],
@@ -591,10 +597,11 @@ function render(s){
 
   $("qdSymbol").textContent=(qdP.integration&&qdP.integration.symbol)||"BTC/USDT";
   $("qdMode").textContent=(qdP.integration&&qdP.integration.mode)||"—";
-  $("qdFair").textContent=qdM.fair_yes!=null?(+qdM.fair_yes).toFixed(3):"—";
-  $("qdBook").textContent=qdM.book_yes!=null?(+qdM.book_yes).toFixed(3):"—";
-  $("qdEdge").textContent=qdM.edge_vs_book!=null?(+qdM.edge_vs_book).toFixed(3):"—";
-  $("qdSignal").textContent=qdM.composite_signal!=null?(+qdM.composite_signal).toFixed(3):"—";
+  $("qdFair").textContent=fair!=null?(+fair).toFixed(3):"—";
+  $("qdBook").textContent=book!=null?(+book).toFixed(3):"—";
+  $("qdEdge").textContent=edge!=null?(+edge).toFixed(3):(qdM.edge_vs_book!=null?(+qdM.edge_vs_book).toFixed(3):"—");
+  const qdSig=qdM.composite_signal!=null?+qdM.composite_signal:(fair!=null&&book!=null?0.65*(+fair)+0.35*(+book):null);
+  $("qdSignal").textContent=qdSig!=null&&Number.isFinite(+qdSig)?(+qdSig).toFixed(3):"—";
   $("qdComp").textContent=qdM.trend_score!=null?("trend "+(+qdM.trend_score).toFixed(3)):"—";
   $("qdLean").textContent=(qdD.lean||"—")+(qdD.conf!=null?(" @ "+(+qdD.conf).toFixed(2)):"");
   $("qdLean").style.color=qdD.lean==="YES"?"var(--yes-ink)":qdD.lean==="NO"?"var(--no-ink)":"var(--mid-ink)";
@@ -610,7 +617,7 @@ function render(s){
   $("qPrinciples").textContent=(q.principles||[]).join(" · ");
   drawCalib((q.calibration&&q.calibration.bins)||[]);
 
-  renderModelBars(dec,qdP,b);
+  renderModelBars(dec,qdP,b,{fair:fair,book:book,composite:fair!=null&&book!=null?0.65*(+fair)+0.35*(+book):null});
   $("modelSources").textContent=[dec.judge_src,btccLean?("BTCC "+btccLean):null,qdLean?("QD "+qdLean):null,riskBlocked?"RISK BLOCK":null].filter(Boolean).join(" + ")||"—";
 
   renderTape(s.events,s.last_spin);

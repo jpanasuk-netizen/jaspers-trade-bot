@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,79 @@ from pathlib import Path
 from typing import Any
 
 from .config import config
+
+
+def taker_fee_usd(price: float, count: int = 1) -> float:
+    """Kalshi quadratic taker fee, rounded up to 1¢."""
+    p = min(0.99, max(0.01, float(price)))
+    raw = 0.07 * max(1, int(count)) * p * (1.0 - p)
+    return math.ceil(raw * 100.0 - 1e-12) / 100.0
+
+
+def _px01(v: Any) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x > 1.5:
+        x = x / 100.0
+    # Kalshi min tick is 1¢. 0.001 is a bad field, not a 1¢ book.
+    if x < 0.01 or x > 0.99:
+        return None
+    return x
+
+
+def contract_quote(side: str, market: dict[str, Any]) -> dict[str, Any] | None:
+    """1-lot YES/NO cost: pay the ask + 1¢-style fee. Not short-YES margin."""
+    side = str(side or "").upper()
+    yes_ask = _px01(market.get("yes_ask") if market.get("yes_ask") is not None else market.get("yes_ask_dollars"))
+    no_ask = _px01(market.get("no_ask") if market.get("no_ask") is not None else market.get("no_ask_dollars"))
+    yes_bid = _px01(market.get("yes_bid") if market.get("yes_bid") is not None else market.get("yes_bid_dollars"))
+    no_bid = _px01(market.get("no_bid") if market.get("no_bid") is not None else market.get("no_bid_dollars"))
+    if no_ask is None and yes_bid is not None:
+        no_ask = round(max(0.01, min(0.99, 1.0 - yes_bid)), 4)
+    if yes_ask is None and no_bid is not None:
+        yes_ask = round(max(0.01, min(0.99, 1.0 - no_bid)), 4)
+    if side == "YES":
+        ask = yes_ask
+        book_side = "bid"
+        px = ask
+    elif side == "NO":
+        ask = no_ask
+        book_side = "ask"
+        px = round(1.0 - ask, 4) if ask is not None else None  # sell YES at 1 − NO ask
+    else:
+        return None
+    if ask is None or px is None:
+        return None
+    fee = taker_fee_usd(ask, 1)
+    return {
+        "side": side,
+        "ask": round(ask, 4),
+        "px": round(px, 4),
+        "book_side": book_side,
+        "fee": fee,
+        "unit": round(ask, 4),
+        "need": round(ask + fee, 4),
+        "count": 1,
+    }
+
+
+def cheapest_affordable(market: dict[str, Any], cash: float) -> dict[str, Any] | None:
+    """Pick the 1-lot the pennies can actually pay. Prefer cheaper ask."""
+    cash_f = float(cash or 0)
+    quotes = []
+    for side in ("YES", "NO"):
+        q = contract_quote(side, market)
+        if q:
+            quotes.append(q)
+    quotes.sort(key=lambda q: q["need"])
+    for q in quotes:
+        if cash_f + 1e-9 >= q["need"]:
+            return q
+    return quotes[0] if quotes else None
 
 ORDER_PATH = "/trade-api/v2/portfolio/events/orders"
 ALT_ORDER_PATHS = (
@@ -39,11 +113,10 @@ def ensure_shard_funds(key_id, pk, dest_shard: int, min_dollars: float = 0.15) -
     have_dest = shards.get(dest_shard, 0.0)
     have_src = shards.get(0, 0.0)
     moved = 0.0
-    if have_dest < min_dollars and have_src > 0.02:
-        # leave a dust buffer on shard 0
-        send = min(have_src - 0.01, max(0.0, min_dollars - have_dest + 0.05))
-        send = round(send, 4)
-        if send >= 0.02:
+    if have_dest < min_dollars and have_src >= 0.01:
+        # recover pennies: dump leftover shard-0 dust onto the crypto shard
+        send = round(have_src if have_src < 0.05 else min(have_src - 0.01, max(0.0, min_dollars - have_dest + 0.05)), 4)
+        if send >= 0.01:
             amount_cc = int(round(send * 10000))  # centicents
             body = {
                 "source": "event_contract",
@@ -154,28 +227,14 @@ def place_order(
     stake_usd: float | None = None,
 ) -> dict[str, Any]:
     key_id, pk = load_creds()
-    yes_ask = float(market.get("yes_ask") or market.get("yes_ask_dollars") or 0)
-    no_ask = float(market.get("no_ask") or market.get("no_ask_dollars") or 0)
-    yes_bid = market.get("yes_bid") if market.get("yes_bid") is not None else market.get("yes_bid_dollars")
-    yes_bid = float(yes_bid) if yes_bid not in (None, "") else max(0.01, 1.0 - (no_ask or 0.5))
-
-    # V2 quotes on the YES book only
-    if side == "YES":
-        # buy YES — bid near ask
-        px = round(min(0.99, max(0.01, yes_ask + 0.01 if yes_ask else 0.5)), 4)
-        book_side = "bid"
-        entry_ref = yes_ask or px
-        # capital at risk ≈ px per contract
-        unit = px
-    else:
-        # NO = sell YES — CROSS the book: price at bid or one tick below
-        bid = float(yes_bid) if yes_bid not in (None, "") else None
-        if bid is None:
-            bid = max(0.01, 1.0 - (no_ask or 0.5))
-        px = round(max(0.01, min(0.99, bid - 0.01)), 4)  # aggressive taker
-        book_side = "ask"
-        entry_ref = no_ask or (1.0 - px)
-        unit = max(px, 1.0 - px)
+    q = contract_quote(side, market)
+    if not q:
+        raise RuntimeError(f"no {side} ask on book")
+    px = q["px"]
+    book_side = q["book_side"]
+    unit = q["unit"]
+    need = q["need"]
+    count = 1
 
     stake = float(stake_usd if stake_usd is not None else config.stake_usd)
 
@@ -185,7 +244,7 @@ def place_order(
         market_ex = int(market_ex) if market_ex is not None else 2
     except (TypeError, ValueError):
         market_ex = 2
-    fund_info = ensure_shard_funds(key_id, pk, market_ex, min_dollars=max(0.2, float(stake or 0.2)))
+    fund_info = ensure_shard_funds(key_id, pk, market_ex, min_dollars=max(0.04, float(need or 0.04)))
     try:
         _st_b, bal = _kreq(key_id, pk, "GET", "/trade-api/v2/portfolio/balance")
         avail = 0.0
@@ -199,24 +258,32 @@ def place_order(
         if avail <= 0:
             raw = float(bal.get("balance_dollars") or 0)
             avail = raw / 100.0 if raw > 50 else raw
-        # Fill-first: if planned stake can't cover margin but cash can, use cash
-        if unit > stake and avail >= unit:
-            stake = min(avail * 0.97, max(unit, stake))
-        else:
-            stake = min(stake, max(0.0, avail * 0.95))
     except Exception:  # noqa: BLE001
-        pass
+        avail = float(stake or 0)
 
-    if unit <= 0:
-        unit = 0.05
-    count = max(1, int(stake / max(0.05, unit)))
-    while count > 1 and count * unit > stake * 1.05:
-        count -= 1
-    if count == 1 and unit > stake * 1.02:
-        raise RuntimeError(
-            f"1 contract needs ~${unit:.2f} (side={side} px={px:.4f}) but stake/cash=${stake:.2f} "
-            f"shard={market_ex} fund={fund_info}"
-        )
+    lot = float(q["need"])
+    if lot > 0:
+        budget = min(float(stake or lot), avail if avail else float(stake or lot))
+        count = max(1, int(budget / lot))
+        while count > 1 and count * lot > budget + 1e-9:
+            count -= 1
+        need = round(count * lot, 4)
+        unit = q["unit"]
+
+    if avail + 1e-9 < (q["need"] if count <= 1 else need):
+        cheap = cheapest_affordable(market, avail)
+        if cheap and cheap["side"] != side and avail + 1e-9 >= cheap["need"]:
+            q = cheap
+            side = q["side"]
+            px = q["px"]
+            book_side = q["book_side"]
+            unit = q["unit"]
+            need = q["need"]
+        else:
+            raise RuntimeError(
+                f"1 {side} needs ${need:.2f} (ask {unit:.2f}+fee {q['fee']:.2f}) "
+                f"cash=${avail:.2f} shard={market_ex}"
+            )
 
     ex = market_ex
 

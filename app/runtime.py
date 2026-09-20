@@ -152,7 +152,7 @@ def decision_loop() -> None:
             print(f"[decision] loop error: {exc}", flush=True)
             traceback.print_exc()
         elapsed = time.time() - t0
-        time.sleep(max(2.0, _decision_poll_sec() - elapsed))
+        time.sleep(max(1.0, _decision_poll_sec() - elapsed))
 
 
 def warmup() -> None:

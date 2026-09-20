@@ -31,6 +31,9 @@ cd jev-15m-kalshi-bot
 # optional: copy .env.example → .env and fill keys
 python -m pip install typesafe-sdk cryptography websockets requests
 python -m app.main
+# history site (separate process)
+python -m app.history_server
+# open http://127.0.0.1:3002/
 # HUD: http://127.0.0.1:3000/
 ```
 
@@ -57,7 +60,8 @@ Windows one-shot:
 
 | Path | Purpose |
 |---|---|
-| `/` | Live HUD |
+| `/` | Live HUD (`:3000`) |
+| history site | `http://127.0.0.1:3002/` — full ledger, result mix, martingale climb |
 | `/history` | Decision history (ledger replay) |
 | `/api/state` | Full desk state (charts, gates, BTCC, quant) |
 | `/api/btcc` | BTCC signal board |

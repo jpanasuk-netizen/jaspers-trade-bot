@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from .config import config
-from .market import _normalize_market, _window_meta
+from .market import _normalize_market, _window_meta, refresh_seconds_left
 
 UA = {
     "User-Agent": "jev-15m-fast/2.0",
@@ -175,31 +175,49 @@ def _fetch_spot_race() -> dict[str, Any]:
     return best
 
 
+MIN_TRADE_SECS = 8.0  # match risk-gate data_freshness
+MAX_CURRENT_SECS = 16 * 60.0  # current 15m + 1m slack
+
+
+def _has_px(m: dict[str, Any]) -> bool:
+    return any(
+        v is not None and float(v) > 0.0
+        for v in (m.get("yes_ask"), m.get("no_ask"), m.get("yes_bid"), m.get("no_bid"))
+    )
+
+
 def _rank_market(m: dict[str, Any]) -> tuple:
-    ya, na = m.get("yes_ask"), m.get("no_ask")
-    yb, nb = m.get("yes_bid"), m.get("no_bid")
-    has_px = any(v is not None and float(v) > 0.0 for v in (ya, na, yb, nb))
+    refresh_seconds_left(m)
+    has_px = _has_px(m)
     secs = m.get("seconds_left")
     secs_f = float(secs) if secs is not None else -1.0
-    if secs_f < 0:
-        time_rank = 2
-    elif secs_f <= 20 * 60.0:
-        time_rank = 0
+    settled = bool(m.get("settled")) or str(m.get("status") or "").lower() in {
+        "closed", "determined", "settled", "finalized",
+    }
+    if settled or 0 <= secs_f <= MIN_TRADE_SECS:
+        time_rank = 3  # dead / last seconds — do not trade
+    elif MIN_TRADE_SECS < secs_f <= MAX_CURRENT_SECS:
+        time_rank = 0  # live current window
+    elif secs_f > MAX_CURRENT_SECS:
+        time_rank = 1  # next window
     else:
-        time_rank = 1
+        time_rank = 2
     empty = 0 if has_px else 1
-    closeness = secs_f if secs_f >= 0 else 1e9
-    return (empty, time_rank, closeness)
+    # among live windows, prefer more time remaining (not the dying print)
+    closeness = -secs_f if time_rank == 0 else (secs_f if secs_f >= 0 else 1e9)
+    return (time_rank, empty, closeness)
 
 
 def _pick_active(markets: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not markets:
         return None
     ranked = sorted(markets, key=_rank_market)
-    near = [m for m in ranked if _rank_market(m)[0] == 0 and _rank_market(m)[1] == 0]
-    if near:
-        near.sort(key=lambda m: float(m.get("seconds_left") if m.get("seconds_left") is not None else 1e9))
-        return near[0]
+    live = [m for m in ranked if _rank_market(m)[0] == 0]
+    if live:
+        return live[0]
+    upcoming = [m for m in ranked if _rank_market(m)[0] == 1]
+    if upcoming:
+        return upcoming[0]
     return ranked[0]
 
 
@@ -598,7 +616,11 @@ def fast_snapshot() -> dict[str, Any]:
             "source": "fast_feed",
         }
     book = snap.get("kalshi") or {}
-    active = book.get("active") or {}
+    active = refresh_seconds_left(dict(book.get("active") or {}))
+    if book.get("active") is not None:
+        book = dict(book)
+        book["active"] = active
+        snap["kalshi"] = book
     spot = snap.get("spot") or {}
     price = spot.get("price")
     open_px = active.get("open_of_window")

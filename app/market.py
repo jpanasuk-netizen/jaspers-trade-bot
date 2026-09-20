@@ -75,12 +75,55 @@ def _side_prices(m: dict[str, Any]) -> tuple[float | None, float | None, float |
     return yb, ya, nb, na
 
 
-def _window_meta(ticker: str) -> dict[str, Any]:
-    """Parse KXBTC15M tickers into window open time + remaining seconds.
+def _et_zone():
+    try:
+        from zoneinfo import ZoneInfo
 
-    Kalshi crypto 15m series tickers look like:
-      KXBTC15M-26SEP191200-...
-    We parse YYMMMDDHHMM when present; otherwise return empty window info.
+        return ZoneInfo("America/New_York")
+    except Exception:  # noqa: BLE001
+        import datetime as dt
+
+        # crude EST fallback if zoneinfo data is missing
+        return dt.timezone(dt.timedelta(hours=-5))
+
+
+def _parse_close_epoch(raw: Any) -> float | None:
+    if not raw:
+        return None
+    import datetime as dt
+
+    s = str(raw).strip().replace("Z", "+00:00")
+    try:
+        close_dt = dt.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if close_dt.tzinfo is None:
+        close_dt = close_dt.replace(tzinfo=dt.timezone.utc)
+    return close_dt.timestamp()
+
+
+def refresh_seconds_left(market: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep seconds_left live off close_epoch — don't wait for the next HTTP pull."""
+    if not market:
+        return {}
+    close_epoch = market.get("close_epoch")
+    if close_epoch is None:
+        close_epoch = _parse_close_epoch(market.get("close_time") or market.get("expiration_time"))
+        if close_epoch is not None:
+            market["close_epoch"] = close_epoch
+            if market.get("open_epoch") is None:
+                market["open_epoch"] = close_epoch - 15 * 60
+    if close_epoch is not None:
+        market["seconds_left"] = max(0.0, float(close_epoch) - time.time())
+    return market
+
+
+def _window_meta(ticker: str) -> dict[str, Any]:
+    """Parse KXBTC15M tickers into window open/close.
+
+    Tickers look like KXBTC15M-26SEP200845-45. The YYMMMDDHHMM stamp is
+    America/New_York close time (not UTC open). Prefer API close_time when
+    present — this is only a fallback.
     """
     info = {
         "ticker": ticker,
@@ -93,13 +136,13 @@ def _window_meta(ticker: str) -> dict[str, Any]:
     if not ticker or "-" not in ticker:
         return info
     parts = ticker.split("-")
-    # look for a token that looks like 26SEP191200
     months = {
         "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
         "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
     }
     import datetime as dt
 
+    et = _et_zone()
     for part in parts:
         p = part.upper()
         if len(p) >= 11 and p[2:5] in months and p[5:7].isdigit() and p[7:11].isdigit():
@@ -110,13 +153,14 @@ def _window_meta(ticker: str) -> dict[str, Any]:
                 day = int(p[5:7])
                 hour = int(p[7:9])
                 minute = int(p[9:11])
-                open_dt = dt.datetime(year, month, day, hour, minute, tzinfo=dt.timezone.utc)
-                close_dt = open_dt + dt.timedelta(minutes=15)
+                # Stamp is Eastern close of the 15m window.
+                close_dt = dt.datetime(year, month, day, hour, minute, tzinfo=et)
+                open_dt = close_dt - dt.timedelta(minutes=15)
                 now = dt.datetime.now(dt.timezone.utc)
                 info["open_epoch"] = open_dt.timestamp()
                 info["close_epoch"] = close_dt.timestamp()
                 info["seconds_left"] = max(0.0, close_dt.timestamp() - now.timestamp())
-                info["window_id"] = f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}Z"
+                info["window_id"] = open_dt.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
             except (ValueError, OverflowError):
                 pass
             break
@@ -160,11 +204,17 @@ def _normalize_market(m: dict[str, Any], series: str) -> dict[str, Any]:
                 break
 
     win = _window_meta(ticker)
+    close_raw = m.get("close_time") or m.get("expiration_time")
+    close_epoch = _parse_close_epoch(close_raw)
+    if close_epoch is not None:
+        win["close_epoch"] = close_epoch
+        win["open_epoch"] = close_epoch - 15 * 60
+        win["seconds_left"] = max(0.0, close_epoch - time.time())
     volume = m.get("volume_fp")
     if volume is None:
         volume = m.get("volume")
 
-    return {
+    out = {
         "series": series,
         "ticker": ticker,
         "status": m.get("status") or "",
@@ -181,10 +231,11 @@ def _normalize_market(m: dict[str, Any], series: str) -> dict[str, Any]:
         "open_epoch": win["open_epoch"],
         "close_epoch": win["close_epoch"],
         "seconds_left": win["seconds_left"],
-        "close_time": m.get("close_time"),
+        "close_time": close_raw,
         "result": m.get("result") or "",
         "raw_status": m.get("status"),
     }
+    return refresh_seconds_left(out)
 
 
 def fetch_kalshi_btc_book() -> dict[str, Any]:
@@ -215,13 +266,9 @@ def fetch_kalshi_btc_book() -> dict[str, Any]:
                 markets.append(norm)
             if markets:
                 break
-        markets.sort(
-            key=lambda x: (
-                0 if (x.get("yes_ask") is not None or x.get("no_ask") is not None) else 1,
-                x.get("open_epoch") or 0,
-            )
-        )
-        active = markets[0] if markets else None
+        from .fast_feed import _pick_active
+
+        active = _pick_active(markets) if markets else None
         return {
             "ok": True,
             "series": config.series_ticker,

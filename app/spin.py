@@ -123,7 +123,7 @@ def _entry_for(side: str, active: dict[str, Any]) -> float | None:
 
 def paper_fill(side: str, entry: float, stake: float) -> dict[str, Any]:
     px = max(0.01, min(0.99, entry))
-    count = max(1, int(stake / max(0.05, px)))
+    count = max(1, int(stake / max(0.01, px)))
     while count > 1 and count * px > stake * 1.05:
         count -= 1
     cost = round(count * px, 4)
@@ -371,66 +371,84 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
 
     cash = plan.get("cash")
     if mode == "LIVE":
-        # LIVE: size to at least 1 contract using shard cash (martingale fill mode)
+        # LIVE pennies: 1-lot = the ASK + Kalshi 1¢-style fee. Not short-YES margin.
         try:
             from . import martingale as mg
             from . import kalshi_live
 
-            # Prefer cash on the market's crypto shard (usually 2)
             shard_cash = kalshi_live.ensure_shard_funds(
                 *kalshi_live.load_creds(),
                 dest_shard=int(active.get("exchange_index") or config.kalshi_exchange_index or 2),
-                min_dollars=max(0.25, float(stake or 0.25)),
+                min_dollars=0.04,
             )
             cash_f = float((shard_cash or {}).get("dest_cash") or cash or 0)
             if cash_f <= 0:
                 cash_f = float(mg.kalshi_cash() or 0)
             plan = mg.plan_stake(cash_f)
-            # Margin unit: YES ≈ ask; NO ≈ max(yes_bid, 1-yes_bid) short-YES margin
-            yb = active.get("yes_bid") if active.get("yes_bid") is not None else active.get("yes_bid_dollars")
-            ya = active.get("yes_ask") if active.get("yes_ask") is not None else active.get("yes_ask_dollars")
-            try:
-                yb = float(yb) if yb not in (None, "") else None
-            except (TypeError, ValueError):
-                yb = None
-            try:
-                ya = float(ya) if ya not in (None, "") else None
-            except (TypeError, ValueError):
-                ya = None
-            if side == "YES":
-                unit = float(entry or ya or 0.5)
+            q = kalshi_live.contract_quote(side, active)
+            cheap = kalshi_live.cheapest_affordable(active, cash_f)
+            if q and cash_f + 1e-9 >= q["need"]:
+                pick = q
+            elif cheap and cash_f + 1e-9 >= cheap["need"]:
+                if cheap["side"] != side:
+                    rec["side_switch"] = {
+                        "from": side,
+                        "to": cheap["side"],
+                        "reason": f"pennies buy {cheap['side']} @ {cheap['ask']:.2f}+{cheap['fee']:.2f}",
+                    }
+                pick = cheap
+                side = cheap["side"]
             else:
-                unit = max(float(yb or 0.2), 1.0 - float(yb or 0.2)) if yb is not None else float(entry or 0.5)
-            wanted = max(float(plan.get("stake") or stake), unit)
-            stake = min(cash_f * 0.97, wanted)
-            if stake < unit * 0.99:
-                other = "NO" if side == "YES" else "YES"
-                other_entry = _entry_for(other, active)
-                other_unit = float(other_entry or 0.5)
-                if other == "NO" and yb is not None:
-                    other_unit = max(yb, 1.0 - yb)
-                if config.trade_on_lean and other_entry and cash_f >= other_unit:
-                    rec["side_switch"] = {"from": side, "to": other, "reason": "affordability"}
-                    side = other
-                    entry = float(other_entry)
-                    unit = other_unit
-                    stake = min(cash_f * 0.97, max(unit, float(plan.get("stake") or 0.05)))
-            if stake < unit * 0.95:
-                rec["result"] = "SKIP_STAKE_TOO_SMALL"
+                src = cheap or q or {}
+                need = src.get("need")
+                ask = src.get("ask")
+                fee = src.get("fee")
+                sside = src.get("side") or side
+                win_pay = round(1.0 - float(ask), 4) if ask is not None else None
+                rec["result"] = "SKIP_WIN_TOO_SMALL"
                 rec["reason"] = (
-                    f"need ~${unit:.2f} for 1 {side} @ {entry:.2f}; "
-                    f"stake ${stake:.2f}, shard cash ${cash_f:.2f}"
+                    f"3¢ stake is fine — the printed win isn't. "
+                    f"Cheapest 1-lot {sside} @ {ask if ask is not None else '—'} "
+                    f"pays ${win_pay if win_pay is not None else '—'} if right "
+                    f"(need ${need if need is not None else '—'}, cash ${cash_f:.4f}). "
+                    f"Wait for a ≤3¢ ask (win ≥97¢)."
                 )
                 rec["shard"] = shard_cash
+                rec["quote"] = src
+                rec["win_pay"] = win_pay
                 _append(paths["ledger"], rec)
                 return rec
-            rec["stake_bumped"] = {"stake": round(stake, 4), "unit": unit, "entry": entry, "cash": cash_f}
+            entry = float(pick["ask"])
+            stake = float(pick["need"])
+            rec["win_pay"] = round(1.0 - entry, 4)
+            lot = float(pick["need"])
+            wanted = float(plan.get("stake") or lot)
+            lots = max(1, int(wanted / lot)) if lot > 0 else 1
+            while lots > 1 and lots * lot > cash_f + 1e-9:
+                lots -= 1
+            stake = round(lots * lot, 4)
+            rec["stake_bumped"] = {
+                "stake": stake,
+                "unit": pick["unit"],
+                "fee": pick["fee"],
+                "need": pick["need"],
+                "lots": lots,
+                "wanted": round(wanted, 4),
+                "entry": entry,
+                "cash": cash_f,
+                "side": side,
+                "win_pay": rec["win_pay"],
+                "next_double": round(stake * 2, 4),
+            }
         except Exception as exc:  # noqa: BLE001
             rec["stake_error"] = str(exc)[:200]
     else:
         if entry > 0 and stake < entry and stake < 0.05:
-            rec["result"] = "SKIP_STAKE_TOO_SMALL"
-            rec["reason"] = f"stake ${stake:.2f} < min contract @ {entry:.2f}"
+            rec["result"] = "SKIP_WIN_TOO_SMALL"
+            rec["reason"] = (
+                f"3¢ stake is fine — ticket @ {entry:.2f} pays ${1-entry:.2f}; "
+                f"need ${entry:.2f}, stake ${stake:.2f}. Wait for a ≤3¢ ask."
+            )
             _append(paths["ledger"], rec)
             return rec
 
@@ -460,11 +478,13 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             rec["filled"] = False
         _append(paths["ledger"], rec)
         _touch_scoreboard(rec)
-        # refresh martingale cash baseline after attempt
         try:
             from . import martingale as mg
 
-            mg.update_from_cash(mg.kalshi_cash())
+            cash_now = mg.kalshi_cash()
+            if rec.get("filled"):
+                mg.note_fill(float(rec.get("stake_usd") or stake), cash_now)
+            mg.update_from_cash(cash_now)
         except Exception:  # noqa: BLE001
             pass
         return rec
