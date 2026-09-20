@@ -324,7 +324,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         rec["spun"] = True
         return rec
 
-    if stake is not None and stake < 0.05 and plan.get("mode") == "double_down":
+    if stake is not None and stake < 0.01 and plan.get("mode") == "double_down":
         rec["result"] = "SKIP_NO_CASH"
         rec["reason"] = f"stake {stake:.4f} too small / no cash on ex{config.kalshi_exchange_index}"
         _append(paths["ledger"], rec)
@@ -503,14 +503,44 @@ def _touch_scoreboard(rec: dict[str, Any]) -> None:
 
 
 def recent_tape(limit: int = 24) -> list[dict[str, Any]]:
+    return history_records(limit)
+
+
+def history_records(limit: int = 250) -> list[dict[str, Any]]:
     path = _paths()["ledger"]
     if not path.is_file():
         return []
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
+    for line in path.read_text(encoding="utf-8").splitlines()[-max(1, int(limit)) :]:
         try:
             rows.append(json.loads(line))
         except Exception:  # noqa: BLE001
             continue
     rows.reverse()
     return rows
+
+
+def history_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    fills = sent = skips = errors = 0
+    windows: set[str] = set()
+    for r in rows:
+        res = str(r.get("result") or "")
+        if res in {"LIVE_FILLED", "PAPER_FILLED"}:
+            fills += 1
+        elif res in {"LIVE_SENT_NO_FILL"}:
+            sent += 1
+        elif res.startswith("SKIP") or res in {"RISK_GATE_BLOCK", "ALREADY_SPUN", "DAY_STOP", "ESCALATE_NO_LAYER2"}:
+            skips += 1
+        elif "ERROR" in res:
+            errors += 1
+        t = r.get("ticker")
+        if t:
+            windows.add(str(t))
+    return {
+        "fills": fills,
+        "sentNoFill": sent,
+        "skips": skips,
+        "errors": errors,
+        "windows": len(windows),
+        "n": len(rows),
+    }

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jasper's Trade Bot · History</title>
+<style>
+:root {
+  --bg:#FFF; --panel:#F5F4F1; --border:#ECECEA;
+  --ink:#0A0A0A; --ink2:#3C3C38; --muted:#77776F;
+  --yes:#0B7A48; --no:#C2402F; --mid:#A16207;
+  --yes-dim:#D9EEE3; --no-dim:#F9DED6; --hold:#E3E1DA;
+  --mono:"Cascadia Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F0EEE9;color:var(--ink);font-family:var(--sans);font-size:14px}
+.wrap{max-width:1400px;margin:12px auto 40px;background:var(--bg);border:1px solid var(--border);border-radius:18px;overflow:hidden}
+.head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--border)}
+.brand{font-weight:700}
+.chip{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:999px;padding:3px 9px}
+a.chip{color:var(--ink2);text-decoration:none}
+.stats{display:flex;gap:14px;flex-wrap:wrap;padding:8px 18px;font-family:var(--mono);font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}
+.stats strong{color:var(--ink2)}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+tr:hover td{background:#FAFAF8}
+.YES{color:var(--yes);font-weight:700}
+.NO{color:var(--no);font-weight:700}
+.SKIP,.SKIP_CONF,.SKIP_EDGE,.SKIP_NO_CASH,.SKIP_STAKE_TOO_SMALL,.RISK_GATE_BLOCK,.ALREADY_SPUN{color:var(--mid)}
+.LIVE_FILLED,.PAPER_FILLED{background:var(--yes-dim);font-weight:700}
+.LIVE_SENT_NO_FILL,.LIVE_ERROR{background:var(--no-dim)}
+.reason{color:var(--muted);max-width:420px;word-break:break-word}
+.empty{padding:40px;text-align:center;color:var(--muted);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <span class="brand">Jasper's Trade Bot · history</span>
+    <a class="chip" href="/">← live desk</a>
+    <span class="chip" id="n">0 rows</span>
+    <span class="spacer"></span>
+    <span class="chip" id="mode">—</span>
+  </div>
+  <div class="stats">
+    <span>fills <strong id="fills">0</strong></span>
+    <span>sent/no fill <strong id="nofill">0</strong></span>
+    <span>skips <strong id="skips">0</strong></span>
+    <span>errors <strong id="errs">0</strong></span>
+    <span>unique windows <strong id="wins">0</strong></span>
+  </div>
+  <div id="body"><div class="empty">loading ledger…</div></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+function fmtTs(t){
+  if(!t) return "—";
+  const d = new Date(t);
+  if(Number.isNaN(d.getTime())) return String(t).slice(0,19);
+  return d.toLocaleString();
+}
+function cls(s){ return String(s||"").replace(/[^A-Z0-9_]/g,""); }
+async function load(){
+  const r = await fetch("/api/history?limit=400&ts="+Date.now(), {cache:"no-store"});
+  const d = await r.json();
+  const rows = d.rows || [];
+  $("n").textContent = rows.length + " rows";
+  $("mode").textContent = d.liveArmed ? "LIVE" : "PAPER";
+  $("fills").textContent = d.stats.fills;
+  $("nofill").textContent = d.stats.sentNoFill;
+  $("skips").textContent = d.stats.skips;
+  $("errs").textContent = d.stats.errors;
+  $("wins").textContent = d.stats.windows;
+  if(!rows.length){ $("body").innerHTML = '<div class="empty">no decisions yet — ledger fills as the desk ticks</div>'; return; }
+  const tr = rows.map(function(x){
+    const res = x.result || "";
+    return "<tr>"
+      +"<td>"+fmtTs(x.ts)+"</td>"
+      +"<td>"+(x.mode||"—")+"</td>"
+      +"<td>"+(x.ticker||"—")+"</td>"
+      +"<td class='"+(x.side||"")+"'>"+(x.side||"—")+"</td>"
+      +"<td class='"+cls(res)+"'>"+res+"</td>"
+      +"<td>"+(x.conf==null?"—":Number(x.conf).toFixed(2))+"</td>"
+      +"<td>"+(x.entry==null?"—":Number(x.entry).toFixed(3))+"</td>"
+      +"<td>"+(x.stake_usd==null?"—":"$"+Number(x.stake_usd).toFixed(3))+"</td>"
+      +"<td>"+(x.kalshi && x.kalshi.yes_ask!=null ? Number(x.kalshi.yes_ask).toFixed(2)+" / "+Number(x.kalshi.no_ask||0).toFixed(2) : "—")+"</td>"
+      +"<td class='reason'>"+(x.reason||x.spin_reason||"")+"</td>"
+      +"</tr>";
+  }).join("");
+  $("body").innerHTML = "<table><thead><tr><th>time</th><th>mode</th><th>ticker</th><th>side</th><th>result</th><th>conf</th><th>entry</th><th>stake</th><th>yes/no ask</th><th>reason</th></tr></thead><tbody>"+tr+"</tbody></table>";
+}
+load();
+setInterval(load, 4000);
+</script>
+</body>
+</html>

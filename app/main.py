@@ -14,9 +14,10 @@ from . import state
 from .config import config
 from .judge import judge
 from .sentiment import get_sentiment
-from .spin import evaluate_spin, live_armed, recent_tape
+from .spin import evaluate_spin, history_records, history_stats, live_armed, recent_tape
 
 HTML_PATH = Path(__file__).with_name("ui.html")
+HISTORY_PATH = Path(__file__).with_name("history.html")
 
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, payload: Any) -> None:
@@ -62,6 +63,10 @@ class Handler(BaseHTTPRequestHandler):
                 html = HTML_PATH.read_text(encoding="utf-8") if HTML_PATH.is_file() else "<h1>missing ui.html</h1>"
                 _html_response(self, html)
                 return
+            if path in {"/history", "/history.html"}:
+                html = HISTORY_PATH.read_text(encoding="utf-8") if HISTORY_PATH.is_file() else "<h1>missing history.html</h1>"
+                _html_response(self, html)
+                return
             if path == "/api/state":
                 _json_response(self, 200, state.current())
                 return
@@ -98,9 +103,23 @@ class Handler(BaseHTTPRequestHandler):
                 board["doctrine_full"] = DOCTRINE
                 _json_response(self, 200, board)
                 return
+            if path == "/api/history":
+                try:
+                    limit = int((qs.get("limit") or ["250"])[0])
+                except (TypeError, ValueError):
+                    limit = 250
+                rows = history_records(max(1, min(limit, 2000)))
+                _json_response(self, 200, {
+                    "ok": True,
+                    "liveArmed": live_armed(),
+                    "rows": rows,
+                    "stats": history_stats(rows),
+                })
+                return
             if path == "/api/health":
                 _json_response(self, 200, {
                     "ok": True,
+                    "name": "Jasper's Trade Bot",
                     "port": config.port,
                     "series": config.series_ticker,
                     "liveArmed": live_armed(),
@@ -161,7 +180,7 @@ def main() -> None:
 
     config.ensure_dirs()
     print("=" * 64, flush=True)
-    print("  15-min BTC JAP — production desk", flush=True)
+    print("  Jasper's Trade Bot — production desk", flush=True)
     print(f"  HUD   http://{config.host}:{config.port}/", flush=True)
     print(f"  Keys  typesafe={bool(config.typesafe_api_key)}  qd={config.quantdinger_base_url}", flush=True)
     print("=" * 64, flush=True)

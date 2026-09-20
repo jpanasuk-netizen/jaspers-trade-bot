@@ -1,4 +1,6 @@
-# 15-min BTC JAP · Kalshi YES/NO desk
+# Jasper's Trade Bot
+
+15-min BTC JAP · Kalshi YES/NO desk. Live HUD, decision history, JEV + BTCC + QuantDinger.
 
 Regime-adaptive trading desk for **Kalshi KXBTC15M** (Bitcoin 15-minute YES/NO).
 
@@ -17,6 +19,7 @@ Execute     paper / live Kalshi orders in code — never the model
 
 - **Fast-ahead feed** — races Kalshi hosts + BTC spot (Coinbase/Kraken/Bitstamp); ~40–70ms book
 - **Live HUD** — scrolling desk with charts, trade-gate R/Y/G indicators, BTCC board, quant lab
+- **History** — `/history` looks back on every spin / skip / live fill from the local ledger
 - **JEV pipeline** — pinned `jev-1.13.0`, batched typed questions
 - **Quant lab** — Brier / hit-rate / Sharpe from live fair-vs-open calibration ticks
 - **Recover mode** — target $6, martingale, hygiene nix, no auto 500x
@@ -55,6 +58,7 @@ Windows one-shot:
 | Path | Purpose |
 |---|---|
 | `/` | Live HUD |
+| `/history` | Decision history (ledger replay) |
 | `/api/state` | Full desk state (charts, gates, BTCC, quant) |
 | `/api/btcc` | BTCC signal board |
 | `/api/quant` | Quant lab snapshot |
@@ -62,6 +66,7 @@ Windows one-shot:
 | `/api/charts` | Rolling series |
 | `/api/judgment` | Force judge |
 | `/api/spin` | Force spin (paper/live) |
+| `/api/history` | Ledger rows + fill/skip stats |
 
 ## Safety
 

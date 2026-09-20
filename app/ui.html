@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>15m BTC JAP · Kalshi Desk</title>
+<title>Jasper's Trade Bot · Kalshi Desk</title>
 <style>
 :root {
   --bg:#FFF; --panel:#F5F4F1; --border:#ECECEA; --track:#F1F0EC;
@@ -87,7 +87,7 @@ canvas.chart.tall{height:140px}
 <body>
 <div class="card">
   <header class="header">
-    <span class="brand">‖ 15m BTC JAP</span>
+    <span class="brand">‖ Jasper's Trade Bot</span>
     <span class="badge" id="modeBadge">PAPER</span>
     <span class="badge" id="judgeBadge">judge</span>
     <span class="chip" id="ticker">KXBTC15M</span>
@@ -97,6 +97,7 @@ canvas.chart.tall{height:140px}
     <span class="chip" id="conn">…</span>
     <span class="chip" id="uptime">00:00:00</span>
     <span class="chip" id="liveTick">tick —</span>
+    <a class="chip" href="/history" style="color:inherit;text-decoration:none">history</a>
   </header>
   <div class="stats">
     <span>spot <strong id="spot">—</strong></span>
@@ -123,6 +124,7 @@ canvas.chart.tall{height:140px}
     <button type="button" class="tab-btn" data-tab="quant">Quant / QD</button>
     <button type="button" class="tab-btn" data-tab="metrics">Metrics</button>
     <button type="button" class="tab-btn" data-tab="tape">Tape / Risk</button>
+    <a class="tab-btn" href="/history" style="text-decoration:none;display:inline-block">History</a>
   </nav>
 
   <div class="main">

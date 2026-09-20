@@ -135,9 +135,24 @@ class Config:
 
     @property
     def live_mark(self) -> Path:
-        if self.live_mark_path:
-            return Path(self.live_mark_path).expanduser()
-        return Path.home() / ".beat15m" / "LIVE_MARK"
+        cands: list[Path] = []
+        raw = (self.live_mark_path or "").strip()
+        if raw:
+            cands.append(Path(raw).expanduser())
+            s = raw.replace("\\", "/")
+            if len(s) >= 2 and s[1] == ":":
+                drive = s[0].lower()
+                rest = s.split(":", 1)[1].lstrip("/")
+                cands.append(Path(f"/mnt/{drive}/{rest}"))
+        cands.append(Path.home() / ".beat15m" / "LIVE_MARK")
+        cands.append(Path("/mnt/c/Users/jpana/.beat15m/LIVE_MARK"))
+        for c in cands:
+            try:
+                if c.is_file():
+                    return c
+            except OSError:
+                continue
+        return cands[0] if cands else Path.home() / ".beat15m" / "LIVE_MARK"
 
     @property
     def secrets_dir_candidates(self) -> list[Path]:
