@@ -3,7 +3,8 @@
 Blueprint: RohOnChain https://x.com/RohOnChain/status/2101311813908652069
   Code computes state. Jev interprets with a parallel battery. Code applies
   policy. Hard risk vetoes never go to the model. Direct api.typesafe.ai.
-  If the call is not back before the next loop, HOLD.
+  The desk loop is about 2s, so a 1–2s answer is on time. Hold only if
+  the call misses JEV_TIMEOUT_SEC.
 
 Jev does not replace Layer 1 (deterministic stats), Layer 2, or execution.
 """
@@ -114,6 +115,9 @@ def build_jev_state(features: dict[str, Any], social_sample: list[Any] | None = 
             "vol_proxy": features.get("vol_proxy"),
             "liquidity_stressed_proxy": features.get("liquidity_stressed_proxy"),
         },
+        "btc_listings": (features.get("finance_db") or {}).get("symbols")
+        if isinstance(features.get("finance_db"), dict)
+        else None,
         "social_stats": {
             "polarity_score": features.get("polarity_score"),
             "sentiment_label": features.get("social_label"),
@@ -383,9 +387,10 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
     edge = max(p_yes, p_no) if side in {"YES", "NO"} else conf
 
     if route == "SKIP":
+        # The battery already said this turn should not run. Keeping the
+        # leaned side here is how the desk used to trade past Jev's own SKIP.
         action = "SKIP"
-        if side not in {"YES", "NO"}:
-            side = "SKIP"
+        side = "SKIP"
         trade_action = "HOLD"
     elif route == "ESCALATE":
         # Do not auto-trade escalated cases without Layer-2; risk gate will block.

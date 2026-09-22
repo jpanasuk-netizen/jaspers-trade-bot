@@ -44,8 +44,14 @@ tr:hover td{background:#FAFAF8}
 .YES{color:var(--yes);font-weight:700}
 .NO{color:var(--no);font-weight:700}
 .SKIP,.SKIP_CONF,.SKIP_EDGE,.SKIP_NO_CASH,.SKIP_STAKE_TOO_SMALL,.SKIP_WIN_TOO_SMALL,.RISK_GATE_BLOCK,.ALREADY_SPUN,.SKIP_ENTRY,.SKIP_NO_QUOTE{color:var(--mid)}
-.LIVE_FILLED,.PAPER_FILLED{background:var(--yes-dim);font-weight:700}
-.LIVE_SENT_NO_FILL,.LIVE_ERROR{background:var(--no-dim)}
+.LIVE_FILLED,.PAPER_FILLED{font-weight:700}
+.orb{width:18px;height:18px;border-radius:50%;display:inline-block;vertical-align:middle}
+.orb.win{background:#16a34a;box-shadow:0 0 10px 4px rgba(34,197,94,.85),0 0 22px 8px rgba(34,197,94,.35)}
+.orb.loss{background:#dc2626;box-shadow:0 0 10px 4px rgba(239,68,68,.9),0 0 22px 8px rgba(239,68,68,.4)}
+.orb.wait{background:#a3a3a3;box-shadow:none;opacity:.55}
+tr.glow-win td{background:rgba(22,163,74,.16)}
+tr.glow-loss td{background:rgba(220,38,38,.16)}
+tr.glow-win td:first-child,tr.glow-loss td:first-child{box-shadow:inset 4px 0 12px rgba(0,0,0,.04)}
 .reason{color:var(--muted);max-width:360px;word-break:break-word}
 .empty{padding:40px;text-align:center;color:var(--muted);font-family:var(--mono)}
 .tablewrap{background:var(--bg);border:1px solid var(--border);border-radius:14px;overflow:auto;max-height:70vh}
@@ -72,7 +78,7 @@ tr:hover td{background:#FAFAF8}
     </div>
   </div>
   <div class="card" style="margin-bottom:10px">
-    <h2>Ledger</h2>
+    <h2>Live fills only</h2>
     <div class="filters">
       <select id="fResult"><option value="">all results</option></select>
       <select id="fSide">
@@ -160,8 +166,14 @@ async function ledger(){
     rows = rows.filter(x => (String(x.ticker||"")+" "+String(x.reason||"")+" "+String(x.result||"")).toLowerCase().includes(q));
   }
   $("shown").textContent = rows.length + " shown";
-  if(!rows.length){ $("table").innerHTML = '<div class="empty">no matching decisions</div>'; return; }
-  const tr = rows.map(x => "<tr>"
+  if(!rows.length){ $("table").innerHTML = '<div class="empty">no live fills yet</div>'; return; }
+  const tr = rows.map(x => {
+    const w = x.won;
+    const glow = w===true?"glow-win":(w===false?"glow-loss":"");
+    const orb = w===true?"win":(w===false?"loss":"wait");
+    const lab = w===true?"WON":(w===false?"LOST":"wait");
+    return "<tr class='"+glow+"'>"
+    +"<td><span class='orb "+orb+"' title='"+lab+"'></span></td>"
     +"<td>"+fmtTs(x.ts)+"</td>"
     +"<td>"+(x.mode||"—")+"</td>"
     +"<td>"+(x.ticker||"—")+"</td>"
@@ -177,9 +189,10 @@ async function ledger(){
     +"<td>"+(x.judge_src||"—")+"</td>"
     +"<td>"+(x.win_pay!=null?n(x.win_pay,2):"—")+"</td>"
     +"<td class='reason'>"+(x.reason||"")+"</td>"
-    +"</tr>").join("");
+    +"</tr>";
+  }).join("");
   $("table").innerHTML = "<table><thead><tr>"
-    +"<th>time</th><th>mode</th><th>ticker</th><th>side</th><th>result</th>"
+    +"<th></th><th>time</th><th>mode</th><th>ticker</th><th>side</th><th>result</th>"
     +"<th>conf</th><th>edge</th><th>entry</th><th>stake</th><th>yes/no ask</th>"
     +"<th>spot</th><th>Δ open</th><th>judge</th><th>win $</th><th>reason</th>"
     +"</tr></thead><tbody>"+tr+"</tbody></table>";

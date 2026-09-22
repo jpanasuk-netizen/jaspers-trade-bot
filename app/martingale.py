@@ -66,22 +66,35 @@ def save_state(st: dict[str, Any]) -> dict[str, Any]:
 
 
 def kalshi_cash(exchange_index: int | None = None) -> float | None:
-    """Live cash on the exchange shard. None if keys/API unavailable."""
+    """Live Predictions cash. Default = event-contract wallet (UI Predictions)."""
     try:
         from . import kalshi_live
 
         kid, pk = kalshi_live.load_creds()
         _st, bal = kalshi_live._kreq(kid, pk, "GET", "/trade-api/v2/portfolio/balance")
-        idx = config.kalshi_exchange_index if exchange_index is None else exchange_index
+        if exchange_index is not None:
+            idx = int(exchange_index)
+            for row in bal.get("balance_breakdown") or []:
+                try:
+                    if int(row.get("exchange_index", -1)) == idx:
+                        return float(row.get("balance") or 0)
+                except (TypeError, ValueError):
+                    continue
+        # Predictions = event shards 0 + 2 (not perps). Matches Kalshi UI.
+        pred = 0.0
+        saw = False
         for row in bal.get("balance_breakdown") or []:
             try:
-                if int(row.get("exchange_index", -1)) == int(idx):
-                    return float(row.get("balance") or 0)
+                idx = int(row.get("exchange_index", -1))
             except (TypeError, ValueError):
                 continue
-        return float(bal.get("balance_dollars") or bal.get("balance") or 0) / (
-            100.0 if float(bal.get("balance") or 0) > 50 else 1.0
-        )
+            if idx in (0, 2):
+                pred += float(row.get("balance") or 0)
+                saw = True
+        if saw:
+            return round(pred, 4)
+        raw = float(bal.get("balance_dollars") or bal.get("balance") or 0)
+        return raw / 100.0 if raw > 50 else raw
     except Exception:  # noqa: BLE001
         return None
 

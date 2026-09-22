@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jasper knobs — easy mode</title>
+  <style>
+    :root { --bg:#0c1117; --card:#151c24; --ink:#e8eef4; --muted:#8b9aab; --yes:#3dd68c; --no:#ff6b6b; --line:#243040; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: ui-rounded, "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:28px 24px 8px; max-width:980px; margin:0 auto; }
+    h1 { font-size:32px; margin:0 0 8px; }
+    .lead { color:var(--muted); font-size:18px; line-height:1.45; max-width:40rem; }
+    .status { margin:16px 24px; max-width:980px; margin-left:auto; margin-right:auto; padding:12px 16px; border-radius:12px; background:#1a2430; }
+    main { max-width:980px; margin:0 auto; padding:8px 24px 80px; display:grid; gap:16px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 18px 16px; }
+    .card h2 { margin:0 0 6px; font-size:22px; }
+    .kid { font-size:17px; line-height:1.45; margin:0 0 12px; }
+    label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+    input[type=text], input[type=number] { width:100%; max-width:280px; font-size:20px; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#0c1117; color:var(--ink); }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .tog { display:flex; align-items:center; gap:10px; font-size:18px; }
+    button { font-size:18px; padding:12px 18px; border:0; border-radius:12px; cursor:pointer; font-weight:700; }
+    .go { background:var(--yes); color:#062; }
+    .stop { background:var(--no); color:#fff; }
+    .ghost { background:#243040; color:var(--ink); }
+    footer { position:sticky; bottom:0; background:#0c1117ee; padding:16px 24px; display:flex; gap:12px; flex-wrap:wrap; justify-content:center; border-top:1px solid var(--line); }
+    .ok { color:var(--yes); }
+    .bad { color:var(--no); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>The easy knobs</h1>
+    <p class="lead">This is the Bitcoin 15‑minute up/down game. YES means “price went up.” NO means “price went down.” These knobs tell the robot when to buy a ticket. Big words are for grown‑ups. The rest is for you.</p>
+  </header>
+  <div class="status" id="status">Loading…</div>
+  <main id="cards"></main>
+  <footer>
+    <button class="go" id="save">Save knobs</button>
+    <button class="ghost" id="restart">Save and wake the robot up again</button>
+    <button class="go" id="liveon">Real money ON</button>
+    <button class="stop" id="liveoff">Real money OFF</button>
+  </footer>
+<script>
+const KNOBS = [
+  {key:"ENTRY_CEIL", type:"number", step:"0.01", title:"How pricey a ticket we will buy",
+   kid:"A ticket costs pennies to dollars. 0.75 means 75 cents. If a ticket costs 95 cents, the prize is only 5 cents. That is a tiny cookie. We wait until the ticket is 75 cents or less."},
+  {key:"ENTRY_FLOOR", type:"number", step:"0.01", title:"Do not buy a ticket the book already says is dead",
+   kid:"0.20 means 20 cents. A 1-cent ticket is the side that is about to lose. We do not buy that."},
+  {key:"ENTRY_MAX_SECONDS", type:"number", step:"1", title:"Old clock (not used)",
+   kid:"The robot used to wait until the last few minutes. If the other reads agree with Jev, it can buy any time the window is still open. This number is kept but no longer stops a buy."},
+  {key:"ENTRY_MIN_SECONDS", type:"number", step:"1", title:"Old last-seconds stop (not used)",
+   kid:"Same as above. A passing panel can buy until the window actually closes."},
+  {key:"CONF_FLOOR", type:"number", step:"0.01", title:"How sure the robot must be",
+   kid:"Jev is the fast robot. 0.45 means it has to be a little more sure than a coin flip. If it is shrugging, we do not buy."},
+  {key:"STAKE_USD", type:"number", step:"0.01", title:"How many dollars per try (when we are rich enough)",
+   kid:"This is the grown‑up size. Right now we still buy one little ticket at a time until the piggy bank is bigger."},
+  {key:"POLL_SEC", type:"number", step:"0.5", title:"How often we peek",
+   kid:"The robot looks at the game over and over. 4 means about every four seconds. Smaller number = looks more. We are not a super‑fast Wall Street desk."},
+  {key:"JEV_TIMEOUT_SEC", type:"number", step:"0.1", title:"How long we wait for Jev",
+   kid:"If the robot is slow, the game moves. We wait this many seconds. Then we skip instead of guessing late."},
+  {key:"MAX_DECISION_LATENCY_MS", type:"number", step:"100", title:"Slow‑poke limit (milliseconds)",
+   kid:"1000 milliseconds is one second. If thinking takes longer than this, we used to freeze. Now if Jev already said YES/NO we still try."},
+  {key:"MARTINGALE_TARGET_USD", type:"number", step:"0.5", title:"Piggy bank goal",
+   kid:"We try to climb to this many dollars. Then we play the normal size. Six dollars is the goal on the screen."},
+  {key:"BASE_STAKE_USD", type:"number", step:"0.01", title:"Tiny ticket when we are climbing",
+   kid:"The smallest first step. Like a nickel. We do not throw the whole piggy on one game."},
+  {key:"DAY_STOP_USD", type:"number", step:"1", title:"Stop if we lose this much today",
+   kid:"If the day is too sad, the robot sits down. A huge number means it almost never sits down."},
+  {key:"SIGNAL_QUALITY_MIN", type:"number", step:"0.01", title:"Is this a messy game?",
+   kid:"If the game looks messy and confusing, we do not play. Higher number = pickier."},
+  {key:"TOXIC_FLOW_MAX", type:"number", step:"0.01", title:"Mean kids in line",
+   kid:"Sometimes the other players know a secret. If it looks like that, we do not stand in their line."},
+  {key:"EDGE_FLOOR", type:"number", step:"0.01", title:"Need a little extra edge?",
+   kid:"0 means any tiny extra is okay. Bigger means we only play when the robot sees a clearer yes."},
+  {key:"SERIES_TICKER", type:"text", title:"Which game",
+   kid:"KXBTC15M is Bitcoin, 15 minutes, up or down. Do not change this unless you mean a different game."},
+];
+const TOGS = [
+  {key:"JEV_ENABLED", title:"Ask Jev the robot", kid:"On = we ask the fast robot. Off = we only use school math."},
+  {key:"TRADE_ON_LEAN", title:"Play if Jev only leans a little", kid:"On = a small yes still counts. Off = only a loud yes."},
+  {key:"MARTINGALE", title:"Climb‑back mode", kid:"On = keep trying small tickets until the piggy goal. Off = only the normal size."},
+  {key:"QUANTDINGER_ENABLED", title:"Ask the other quant robot too", kid:"A second helper that looks at Bitcoin charts. It does not spend money by itself."},
+  {key:"LAYER2_ENABLED", title:"Slow thinking robot", kid:"A slower, wordy helper. Off is okay. We did not turn it on."},
+];
+
+function el(html){ const d=document.createElement("div"); d.innerHTML=html.trim(); return d.firstChild; }
+function cardNum(k, val){
+  return `<section class="card"><h2>${k.title}</h2><p class="kid">${k.kid}</p>
+    <label>${k.key}</label>
+    <input ${k.type==="number"?"type=number":"type=text"} step="${k.step||""}" id="${k.key}" value="${val ?? ""}" /></section>`;
+}
+function cardTog(k, val){
+  const on = val === true || val === "1" || val === "true";
+  return `<section class="card"><h2>${k.title}</h2><p class="kid">${k.kid}</p>
+    <label class="tog"><input type="checkbox" id="${k.key}" ${on?"checked":""}/> On</label></section>`;
+}
+
+async function load(){
+  const r = await fetch("/api/settings");
+  const s = await r.json();
+  document.getElementById("status").innerHTML =
+    `Real money: <b class="${s.live?"ok":"bad"}">${s.live?"ON":"OFF"}</b> ·
+     Piggy (Predictions): <b>$${Number(s.cash||0).toFixed(2)}</b> ·
+     Jev key: ${s.typesafe_set?"ready":"missing"}`;
+  const root = document.getElementById("cards");
+  root.innerHTML = "";
+  for (const k of KNOBS) root.insertAdjacentHTML("beforeend", cardNum(k, s.env[k.key]));
+  for (const k of TOGS) root.insertAdjacentHTML("beforeend", cardTog(k, s.env[k.key]));
+}
+
+function collect(){
+  const env = {};
+  for (const k of KNOBS) env[k.key] = document.getElementById(k.key).value;
+  for (const k of TOGS) env[k.key] = document.getElementById(k.key).checked ? "1" : "0";
+  return env;
+}
+async function save(restart){
+  const r = await fetch("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({env:collect(), restart:!!restart})});
+  const j = await r.json();
+  document.getElementById("status").textContent = j.ok ? (restart ? "Saved. Waking the robot…" : "Saved. Wake the robot for some knobs to stick.") : (j.error||"save failed");
+  if (restart) setTimeout(load, 2500);
+}
+async function live(on){
+  const r = await fetch("/api/live", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({on})});
+  const j = await r.json();
+  document.getElementById("status").textContent = j.ok ? (on?"Real money ON":"Real money OFF") : (j.error||"live failed");
+  load();
+}
+document.getElementById("save").onclick = () => save(false);
+document.getElementById("restart").onclick = () => save(true);
+document.getElementById("liveon").onclick = () => live(true);
+document.getElementById("liveoff").onclick = () => live(false);
+load();
+</script>
+</body>
+</html>

@@ -115,7 +115,7 @@ def board_payload() -> dict[str, Any]:
                 "mode": r.get("mode"),
             }
             for r in tape
-            if r.get("result") not in {None, "ALREADY_SPUN"}
+            if str(r.get("result") or "") == "LIVE_FILLED" or r.get("filled")
         ][:20],
         "totals": (st.get("latest") or {}).get("totals") or {},
     }

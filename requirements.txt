@@ -2,4 +2,6 @@
 cryptography>=42
 typesafe-sdk
 websocket-client>=1.8
+websockets>=13
 requests>=2.32
+financedatabase>=2.2

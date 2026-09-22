@@ -145,13 +145,17 @@ def decision_loop() -> None:
             print(f"[decision] loop error: {exc}", flush=True)
             traceback.print_exc()
         elapsed = time.time() - t0
-        # Late window: snipe cheap winning-side prints faster.
+        # The panel can pass at any time the window is open, so do not wait
+        # out most of the 15 minutes between looks.
         secs = None
         try:
             secs = ((st.get("snapshot") or {}).get("window") or {}).get("seconds_left")
         except Exception:  # noqa: BLE001
             secs = None
-        wait = 0.6 if secs is not None and float(secs) <= 120 else max(1.0, _decision_poll_sec() - elapsed)
+        if secs is not None and float(secs) > 0:
+            wait = 1.5
+        else:
+            wait = max(1.0, _decision_poll_sec() - elapsed)
         time.sleep(max(0.4, wait))
 
 

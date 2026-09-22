@@ -73,6 +73,12 @@ def _hud_extras() -> dict[str, Any]:
         extras["btcc"] = btcc_signal_board()
     except Exception as exc:  # noqa: BLE001
         extras["btcc"] = {"error": str(exc)[:120]}
+    try:
+        from .finance_db import btc_listings
+
+        extras["finance_db"] = btc_listings()
+    except Exception as exc:  # noqa: BLE001
+        extras["finance_db"] = {"error": str(exc)[:120]}
     return extras
 
 
@@ -95,6 +101,12 @@ def _slim_judgment(j: dict[str, Any] | None) -> dict[str, Any]:
 def _slim_spin(s: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(s, dict):
         return {}
+    try:
+        from .settle import attach_outcome
+
+        s = attach_outcome(s)
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ts": s.get("ts"),
         "result": s.get("result"),
@@ -104,6 +116,9 @@ def _slim_spin(s: dict[str, Any] | None) -> dict[str, Any]:
         "entry": s.get("entry"),
         "mode": s.get("mode"),
         "ticker": s.get("ticker"),
+        "won": s.get("won"),
+        "outcome_side": s.get("outcome_side"),
+        "filled": s.get("filled"),
     }
 
 
@@ -118,7 +133,11 @@ def current() -> dict[str, Any]:
             "started_at": _STATE["started_at"],
             "connection": _STATE["connection"],
             "latest": _STATE["latest"],
-            "events": list(_STATE["events"][-12:]),
+            "events": [
+                {**e, "spin": _slim_spin(e.get("spin") if isinstance(e, dict) else None)}
+                for e in list(_STATE["events"][-12:])
+                if isinstance(e, dict)
+            ],
             "last_spin": _slim_spin(_STATE["last_spin"]),
             "last_judgment": _slim_judgment(_STATE["last_judgment"]),
             "snapshot": {

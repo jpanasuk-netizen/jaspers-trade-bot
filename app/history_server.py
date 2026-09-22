@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .config import config
-from .spin import live_armed
+from .spin import is_live_entry, live_armed
 
 HTML_PATH = Path(__file__).with_name("history_desk.html")
 PORT = int(__import__("os").environ.get("HISTORY_PORT", "3002"))
@@ -84,6 +84,8 @@ def _row_view(r: dict[str, Any]) -> dict[str, Any]:
         "ask": bumped.get("entry") or q.get("ask"),
         "risk_verdict": risk.get("verdict"),
         "risk_reasons": risk.get("reasons") or [],
+        "won": None,
+        "outcome_side": None,
     }
 
 
@@ -132,8 +134,23 @@ def summarize() -> dict[str, Any]:
     }
 
 
-def history(limit: int = 400, result: str | None = None, side: str | None = None, mode: str | None = None) -> list[dict[str, Any]]:
-    rows = [_row_view(r) for r in _iter_ledger()]
+def history(
+    limit: int = 400,
+    result: str | None = None,
+    side: str | None = None,
+    mode: str | None = None,
+    live_only: bool = True,
+) -> list[dict[str, Any]]:
+    raw = list(_iter_ledger())
+    if live_only:
+        raw = [r for r in raw if is_live_entry(r)]
+    rows = [_row_view(r) for r in raw]
+    try:
+        from .settle import attach_outcome
+
+        rows = [attach_outcome(r) for r in rows]
+    except Exception:  # noqa: BLE001
+        pass
     rows.reverse()
     if result:
         want = result.upper()
@@ -193,7 +210,9 @@ class Handler(BaseHTTPRequestHandler):
             result = (qs.get("result") or [None])[0]
             side = (qs.get("side") or [None])[0]
             mode = (qs.get("mode") or [None])[0]
-            rows = history(limit, result, side, mode)
+            live_q = (qs.get("live") or ["1"])[0]
+            live_only = str(live_q).strip() not in {"0", "false", "no", "all"}
+            rows = history(limit, result, side, mode, live_only=live_only)
             _json(self, 200, {"ok": True, "n": len(rows), "rows": rows})
             return
         if path == "/api/martingale":

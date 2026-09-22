@@ -201,7 +201,10 @@ async function tick(){
     $("meta").textContent=[j.trade_action,j.src,"conf "+(j.conf!=null?Number(j.conf).toFixed(2):"—"),j.reason].filter(Boolean).join(" · ");
     $("mode").textContent=j.liveArmed?"LIVE":"PAPER";
     $("jev").textContent=JSON.stringify(j,null,2);
-    const rows=(d.tape||[]).slice(0,18).map(r=>{
+    const rows=(d.tape||[]).filter(r=>{
+      const res=String(r.result||"");
+      return res==="LIVE_FILLED"||r.filled;
+    }).slice(0,18).map(r=>{
       const side=r.side||"SKIP";
       return `<div class="row"><span>${(r.ts||"").slice(11,19)||"—"}</span><span class="${side==="YES"?"yes":side==="NO"?"no":""}">${side}</span><span>${r.result||"—"} · conf ${r.conf!=null?Number(r.conf).toFixed(2):"—"} · ${(r.judge&&r.judge.reason)||r.reason||""}</span><span>${r.ticker||"—"}</span></div>`;
     }).join("");

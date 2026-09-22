@@ -67,12 +67,14 @@ class Config:
     jev_conf_floor: float = _f("JEV_CONF_FLOOR", 0.55)
     jev_consistency_min: float = _f("JEV_CONSISTENCY_MIN", 0.45)
     jev_escalate_prob: float = _f("JEV_ESCALATE_PROB", 0.55)
-    # RohOnChain / TypeSafe: if Jev is not back before the next loop, HOLD.
-    jev_timeout_sec: float = _f("JEV_TIMEOUT_SEC", 0.8)
+    # Desk decides about every 2s. Jev may take 1–2s. Only a miss past this
+    # wait is a hold. .env already sets JEV_TIMEOUT_SEC=2.5.
+    jev_timeout_sec: float = _f("JEV_TIMEOUT_SEC", 2.5)
     typesafe_base_url: str = os.environ.get("TYPESAFE_BASE_URL", "https://api.typesafe.ai").strip()
     signal_quality_min: float = _f("SIGNAL_QUALITY_MIN", 0.34)
     toxic_flow_max: float = _f("TOXIC_FLOW_MAX", 0.65)
-    max_vol_proxy: float = _f("MAX_VOL_PROXY", 2.2)
+    # The proxy tops out at 3. 2.2 sits under a normal BTC window, so the gate never opens.
+    max_vol_proxy: float = _f("MAX_VOL_PROXY", 2.8)
     max_book_spread: float = _f("MAX_BOOK_SPREAD", 0.20)
     max_liquidity_stress: float = _f("MAX_LIQUIDITY_STRESS", 0.85)
     max_stake_usd: float = _f("MAX_STAKE_USD", 25.0)
@@ -109,7 +111,12 @@ class Config:
 
     stake_usd: float = _f("STAKE_USD", 2.0)
     conf_floor: float = _f("CONF_FLOOR", 0.55)
-    entry_ceil: float = _f("ENTRY_CEIL", 0.90)
+    entry_ceil: float = _f("ENTRY_CEIL", 0.76)
+    # Do not buy a 1¢ corpse the book has already priced as the loser.
+    entry_floor: float = _f("ENTRY_FLOOR", 0.20)
+    # Fire only in the last few minutes. A $20 lead with 14 minutes left is not the settlement.
+    entry_max_seconds: float = _f("ENTRY_MAX_SECONDS", 180.0)
+    entry_min_seconds: float = _f("ENTRY_MIN_SECONDS", 25.0)
     edge_floor: float = _f("EDGE_FLOOR", 0.0)
     trade_on_lean: bool = _b("TRADE_ON_LEAN", True)
     poll_sec: float = _f("POLL_SEC", 8.0)
@@ -128,7 +135,7 @@ class Config:
 
     kalshi_api_key_id: str = os.environ.get("KALSHI_API_KEY_ID", "").strip()
     kalshi_private_key_path: str = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "").strip()
-    kalshi_exchange_index: int = _i("KALSHI_EXCHANGE_INDEX", 2)
+    kalshi_exchange_index: int = _i("KALSHI_EXCHANGE_INDEX", 0)
     live_mark_path: str = os.environ.get("LIVE_MARK_PATH", "").strip()
 
     coinbase_rest: str = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"

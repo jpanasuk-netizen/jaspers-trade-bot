@@ -211,6 +211,12 @@ def judge(force: bool = False) -> dict[str, Any]:
         from .jev_layer import call_jev_battery
 
         sample = (sent.get("stats") or {}).get("stratified_sample") or []
+        try:
+            from .finance_db import btc_listings
+
+            features["finance_db"] = btc_listings()
+        except Exception:  # noqa: BLE001
+            pass
         jev = call_jev_battery(features, sample)
         jev_meta = jev
         if jev.get("ok"):
@@ -222,6 +228,9 @@ def judge(force: bool = False) -> dict[str, Any]:
             j["typesafe_error"] = jev.get("error") or "jev unavailable"
             j["jev_latency_ms"] = jev.get("latency_ms")
             if jev.get("hold") or jev.get("judge_src") == "jev_stale":
+                # Only a real miss past JEV_TIMEOUT_SEC (2.5s). A 1–2s answer
+                # is on time for this loop. QuantDinger and the fib board
+                # may still take the shot.
                 j["side"] = "SKIP"
                 j["action"] = "SKIP"
                 j["route"] = "SKIP"
@@ -418,6 +427,13 @@ def judge(force: bool = False) -> dict[str, Any]:
         j["action"] = "SKIP"
         j["trade_action"] = "HOLD"
         j["reason"] = (j.get("reason") or "") + " | RISK_BLOCK:" + ",".join(risk.get("reasons") or [])[:160]
+
+    try:
+        from .ai_trader import btc_crowd
+
+        j["ai_trader"] = btc_crowd()
+    except Exception as exc:  # noqa: BLE001
+        j["ai_trader"] = {"lean": "SKIP", "error": str(exc)[:160]}
 
     j["architecture_pipeline"] = [
         "L1-deterministic",
