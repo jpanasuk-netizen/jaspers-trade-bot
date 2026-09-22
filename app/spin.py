@@ -641,6 +641,12 @@ def settle_and_update_scoreboard() -> dict[str, Any]:
     sb["updatedAt"] = int(time.time() * 1000)
     sb["liveArmed"] = live_armed()
     _save_json(paths["scoreboard"], sb)
+    try:
+        from .public_record import publish_record
+
+        publish_record()
+    except Exception:  # noqa: BLE001
+        pass
     return sb
 
 

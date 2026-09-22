@@ -87,6 +87,34 @@
     margin-bottom: 6px;
   }
   .fact span { color: #3c3c38; font-size: 14px; }
+  .record {
+    margin-top: 22px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px 18px 8px;
+  }
+  .record h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+  }
+  .score {
+    font-family: var(--mono);
+    font-size: 28px;
+    letter-spacing: -0.04em;
+  }
+  .score .w { color: var(--yes); }
+  .score .l { color: var(--no); }
+  .recent { list-style: none; padding: 0; margin: 12px 0 0; }
+  .recent li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
   .note {
     margin-top: 22px;
     color: var(--muted);
@@ -115,7 +143,12 @@
       <div class="fact"><b>Hold</b><span>The ticket that gets bought is held to settlement.</span></div>
     </div>
   </div>
-  <p class="note">A public view of the desk. No orders, no keys, no live wallet. Source on <a href="https://github.com/jpanasuk-netizen/jaspers-trade-bot">GitHub</a>.</p>
+  <section class="record" id="record">
+    <h2>Live record</h2>
+    <div class="score" id="score">loading the history desk…</div>
+    <ul class="recent" id="recent"></ul>
+  </section>
+  <p class="note">The win/loss line is the same summary as the history desk. No orders, no keys, no wallet. Source on <a href="https://github.com/jpanasuk-netizen/jaspers-trade-bot">GitHub</a>.</p>
 </main>
 <script>
 const canvas = document.getElementById("chart");
@@ -165,6 +198,25 @@ function draw() {
   requestAnimationFrame(draw);
 }
 draw();
+fetch("record.json?ts=" + Date.now(), {cache: "no-store"})
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    const pnl = Number(d.pnl_usd || 0);
+    const sign = pnl < 0 ? "−$" : "+$";
+    document.getElementById("score").innerHTML =
+      '<span class="w">' + (d.wins || 0) + " wins</span> · " +
+      '<span class="l">' + (d.losses || 0) + " losses</span> · " +
+      sign + Math.abs(pnl).toFixed(2);
+    const list = document.getElementById("recent");
+    list.innerHTML = (d.recent || []).map(function (row) {
+      const when = row.ts ? String(row.ts).slice(5, 16).replace("T", " ") : "—";
+      const mark = row.won === true ? "won" : row.won === false ? "lost" : "open";
+      return "<li><span>" + when + "  " + (row.side || "—") + "</span><span>" + mark + "</span></li>";
+    }).join("");
+  })
+  .catch(function () {
+    document.getElementById("score").textContent = "record not up yet";
+  });
 </script>
 </body>
 </html>
