@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jasper's desk · the line is the trade</title>
+<meta name="description" content="A Kalshi 15-minute Bitcoin desk. The window open is the over/under. Jev names the side. Code places the order." />
+<style>
+  :root {
+    --bg: #f0eee9;
+    --card: #fff;
+    --ink: #0a0a0a;
+    --muted: #77776f;
+    --line: #ececea;
+    --yes: #0b7a48;
+    --no: #c2402f;
+    --mark: #e4573d;
+    --mono: "Cascadia Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 40px 20px 64px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    font-size: clamp(36px, 6vw, 58px);
+    line-height: 0.98;
+    letter-spacing: -0.04em;
+    margin: 10px 0 12px;
+  }
+  .lede {
+    font-size: 18px;
+    max-width: 38rem;
+    color: #3c3c38;
+  }
+  .card {
+    margin-top: 28px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  canvas {
+    width: 100%;
+    height: 280px;
+    display: block;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border-top: 1px solid var(--line);
+  }
+  .fact {
+    background: var(--card);
+    padding: 16px;
+  }
+  .fact b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .fact span { color: #3c3c38; font-size: 14px; }
+  .note {
+    margin-top: 22px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  a { color: inherit; }
+  @media (max-width: 700px) {
+    .facts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">Kalshi · BTC · 15 minutes</div>
+  <h1>The red line is the whole trade.</h1>
+  <p class="lede">Bitcoin above the window open pays YES. Below it pays NO. Jev only names the side. The order goes out in code, and only if that side is still 76¢ or less.</p>
+  <div class="card">
+    <div class="card-head">
+      <span id="side">YES · above the open</span>
+      <span>OVER / UNDER</span>
+    </div>
+    <canvas id="chart" width="880" height="280"></canvas>
+    <div class="facts">
+      <div class="fact"><b>Jev</b><span>One typed call. Side, quality, and whether to skip. No prose.</span></div>
+      <div class="fact"><b>76¢</b><span>If the ask is higher than that, the window is skipped.</span></div>
+      <div class="fact"><b>Hold</b><span>The ticket that gets bought is held to settlement.</span></div>
+    </div>
+  </div>
+  <p class="note">A public view of the desk. No orders, no keys, no live wallet. Source on <a href="https://github.com/jpanasuk-netizen/jaspers-trade-bot">GitHub</a>.</p>
+</main>
+<script>
+const canvas = document.getElementById("chart");
+const ctx = canvas.getContext("2d");
+const sideEl = document.getElementById("side");
+const open = 140;
+let t = 0;
+function priceAt(i) {
+  return open + Math.sin(i / 18) * 36 + Math.sin(i / 7) * 10;
+}
+function draw() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#f7f6f3";
+  ctx.fillRect(0, 0, w, h);
+  const pts = [];
+  for (let i = 0; i < 90; i++) pts.push(priceAt(t + i));
+  const now = pts[pts.length - 1];
+  const above = now >= open;
+  sideEl.textContent = above ? "YES · above the open" : "NO · below the open";
+  sideEl.style.color = above ? "#0b7a48" : "#c2402f";
+  const min = Math.min(open, ...pts) - 16;
+  const max = Math.max(open, ...pts) + 16;
+  const yOf = (v) => h - 24 - ((v - min) / (max - min)) * (h - 48);
+  const y = yOf(open);
+  ctx.strokeStyle = "#e4573d";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7, 5]);
+  ctx.beginPath();
+  ctx.moveTo(16, y);
+  ctx.lineTo(w - 16, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#e4573d";
+  ctx.font = "bold 13px ui-monospace, monospace";
+  ctx.fillText("OVER / UNDER", 22, Math.max(28, y - 8));
+  ctx.strokeStyle = above ? "#0fa968" : "#e4573d";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach((v, i) => {
+    const x = 16 + (i / (pts.length - 1)) * (w - 32);
+    const py = yOf(v);
+    i ? ctx.lineTo(x, py) : ctx.moveTo(x, py);
+  });
+  ctx.stroke();
+  t += 0.6;
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
