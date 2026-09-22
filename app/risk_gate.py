@@ -56,8 +56,8 @@ def evaluate_risk_gate(
     pnl = day_pnl if day_pnl is not None else 0.0
     add(
         "loss_limit",
-        abs(pnl) < config.day_stop_usd,
-        f"|day_pnl| < {config.day_stop_usd}",
+        pnl > -config.day_loss_stop_usd(),
+        f"day loss < {config.day_loss_stop_usd():.2f}",
         f"day_pnl={pnl:.2f}",
     )
 
@@ -169,7 +169,7 @@ def evaluate_risk_gate(
     # Day halt mirror
     add(
         "day_halt",
-        abs(pnl) < config.day_stop_usd,
+        pnl > -config.day_loss_stop_usd(),
         "not day-halted",
         f"pnl={pnl:.2f}",
     )

@@ -110,6 +110,8 @@ class Config:
     twitter_sample: int = _i("TWITTER_SAMPLE", 100)
 
     stake_usd: float = _f("STAKE_USD", 2.0)
+    # Live clip. 5 contracts, or skip if the cash cannot cover that many.
+    order_count: float = _f("ORDER_COUNT", 5.0)
     conf_floor: float = _f("CONF_FLOOR", 0.55)
     entry_ceil: float = _f("ENTRY_CEIL", 0.76)
     # Do not buy a 1¢ corpse the book has already priced as the loser.
@@ -175,6 +177,17 @@ class Config:
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+    def day_loss_stop_usd(self) -> float:
+        """Settled-loss kill for the UTC day.
+
+        DAY_STOP_USD at 100000 or more is the unset placeholder. The kill is
+        then two stakes. A smaller env value is used as written. Wins do not count.
+        """
+        raw = float(self.day_stop_usd)
+        if raw >= 100_000:
+            return max(1.0, float(self.stake_usd) * 2.0)
+        return raw
 
 
 config = Config()

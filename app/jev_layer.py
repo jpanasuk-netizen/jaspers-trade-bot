@@ -79,7 +79,12 @@ def _score_payload(ans: Any, levels: list[str]) -> tuple[float, str]:
 
 
 def build_jev_state(features: dict[str, Any], social_sample: list[Any] | None = None) -> dict[str, Any]:
-    """Compact numeric state (<~400 tokens). Pre-decision facts only."""
+    """Compact numeric state. Pre-decision facts only.
+
+    Raw posts are not included. Questions in one call share this state, so
+    tweet text would sit next to the side question and sway it.
+    """
+    del social_sample
     return {
         "venue": features.get("venue"),
         "asset": features.get("asset"),
@@ -115,15 +120,12 @@ def build_jev_state(features: dict[str, Any], social_sample: list[Any] | None = 
             "vol_proxy": features.get("vol_proxy"),
             "liquidity_stressed_proxy": features.get("liquidity_stressed_proxy"),
         },
-        "btc_listings": (features.get("finance_db") or {}).get("symbols")
-        if isinstance(features.get("finance_db"), dict)
-        else None,
+        "desks": features.get("desks") or {},
         "social_stats": {
             "polarity_score": features.get("polarity_score"),
             "sentiment_label": features.get("social_label"),
             "sample_size": features.get("social_sample"),
         },
-        "representative_tweets": (social_sample or [])[:8],
         "policy": {
             "conf_floor": config.conf_floor,
             "note": "JEV triage only; code applies risk and execution.",
@@ -166,8 +168,8 @@ def build_battery_questions() -> dict[str, Any] | None:
         # News / social relevance
         "news_relevant": Noul(
             instructions=(
-                "Is `social_stats` (and `representative_tweets` if present) relevant "
-                "to this window's settlement direction, not just generic crypto noise?"
+                "Is `social_stats` relevant to this window's settlement direction, "
+                "not just generic crypto noise? Judge the scores only."
             ),
             criteria={
                 "true": "Social/news content materially informs YES/NO for this window.",
@@ -204,6 +206,7 @@ def build_battery_questions() -> dict[str, Any] | None:
             instructions=(
                 "For this Kalshi BTC 15m window, will settlement be ABOVE "
                 "`window.open_of_window` (YES), BELOW it (NO), or no clear edge (SKIP)? "
+                "`desks` are other desks' reads. They are inputs. You decide. "
                 "Use categorical judgment only — do not invent numeric targets."
             ),
             criteria={
@@ -368,7 +371,9 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
     escalate = escalate_p >= config.jev_escalate_prob
     if not conf_ok or not consist_ok or side_raw == "SKIP" or not toxic_ok:
         route = "SKIP"
-    elif escalate:
+    elif escalate and config.layer2_enabled:
+        # A second model is only a route when that model is actually on.
+        # Otherwise the fast side stands. Code still places the order.
         route = "ESCALATE"
     elif not quality_ok:
         route = "SKIP"

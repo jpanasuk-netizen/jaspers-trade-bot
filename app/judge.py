@@ -174,6 +174,57 @@ def _apply_jev_to_shell(jev: dict[str, Any], features: dict[str, Any], sent: dic
     }
 
 
+def _collect_desk_inputs() -> dict[str, Any]:
+    """Every other desk gets a say. None of them set the side."""
+    compact: dict[str, Any] = {
+        "note": "Inputs only. Jev decides YES, NO, or SKIP.",
+    }
+    out: dict[str, Any] = {"compact": compact, "qd_overlay": None, "btcc_board": None, "btcc_ovl": None, "ai": None, "errors": {}}
+    if getattr(config, "quantdinger_enabled", True) and getattr(config, "quantdinger_in_decisions", True):
+        try:
+            from .quantdinger import btc_research_pack, judgment_overlay
+
+            overlay = judgment_overlay(btc_research_pack())
+            out["qd_overlay"] = overlay
+            compact["quantdinger"] = {
+                "lean": overlay.get("lean"),
+                "conf": overlay.get("conf"),
+                "fair_yes": overlay.get("fair_yes"),
+                "edge_vs_book": overlay.get("edge_vs_book"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            out["errors"]["quantdinger"] = str(exc)[:160]
+    try:
+        from .btcc_knowledge import btcc_signal_board, judgment_overlay_from_btcc
+
+        board = btcc_signal_board()
+        overlay = judgment_overlay_from_btcc(board)
+        out["btcc_board"] = board
+        out["btcc_ovl"] = overlay
+        compact["btcc"] = {
+            "lean": overlay.get("lean"),
+            "conf": overlay.get("conf"),
+            "setup": overlay.get("setup"),
+            "hurst": overlay.get("hurst"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["errors"]["btcc"] = str(exc)[:160]
+    try:
+        from .ai_trader import btc_crowd
+
+        crowd = btc_crowd()
+        out["ai"] = crowd
+        compact["ai_trader"] = {
+            "lean": crowd.get("lean"),
+            "buys": crowd.get("buys"),
+            "sells": crowd.get("sells"),
+            "agents": crowd.get("agents"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["errors"]["ai_trader"] = str(exc)[:160]
+    return out
+
+
 def judge(force: bool = False) -> dict[str, Any]:
     """Full regime-adaptive path: L1 → JEV → (L2) → risk gate → judgment."""
     global _JUDGE_CACHE
@@ -204,6 +255,16 @@ def judge(force: bool = False) -> dict[str, Any]:
     features = build_layer1_state(mkt, sent)
     triggers = jev_triggers(features)
 
+    # ---- Other desks, before Jev, so they are inputs and not a second vote ----
+    try:
+        from .finance_db import btc_listings
+
+        features["finance_db"] = btc_listings()
+    except Exception:  # noqa: BLE001
+        pass
+    desks = _collect_desk_inputs()
+    features["desks"] = desks["compact"]
+
     # ---- Layer 1.5: JEV typed battery (one batched call) ----
     j: dict[str, Any] | None = None
     jev_meta: dict[str, Any] = {}
@@ -211,12 +272,6 @@ def judge(force: bool = False) -> dict[str, Any]:
         from .jev_layer import call_jev_battery
 
         sample = (sent.get("stats") or {}).get("stratified_sample") or []
-        try:
-            from .finance_db import btc_listings
-
-            features["finance_db"] = btc_listings()
-        except Exception:  # noqa: BLE001
-            pass
         jev = call_jev_battery(features, sample)
         jev_meta = jev
         if jev.get("ok"):
@@ -229,8 +284,7 @@ def judge(force: bool = False) -> dict[str, Any]:
             j["jev_latency_ms"] = jev.get("latency_ms")
             if jev.get("hold") or jev.get("judge_src") == "jev_stale":
                 # Only a real miss past JEV_TIMEOUT_SEC (2.5s). A 1–2s answer
-                # is on time for this loop. QuantDinger and the fib board
-                # may still take the shot.
+                # is on time for this loop. Other desks do not take the shot.
                 j["side"] = "SKIP"
                 j["action"] = "SKIP"
                 j["route"] = "SKIP"
@@ -241,79 +295,28 @@ def judge(force: bool = False) -> dict[str, Any]:
         if not config.typesafe_api_key:
             j["typesafe_error"] = "TYPESAFE_API_KEY missing; Layer-1 only"
 
-    # ---- QuantDinger BTC research (15m decision input) ----
-    qd_pack = None
-    qd_overlay = None
-    if getattr(config, "quantdinger_enabled", True) and getattr(config, "quantdinger_in_decisions", True):
-        try:
-            from .quantdinger import btc_research_pack, judgment_overlay
-
-            qd_pack = btc_research_pack()
-            qd_overlay = judgment_overlay(qd_pack)
-            # Feed JEV/deterministic state with BTC model scores
-            if isinstance(j, dict):
-                j["quantdinger"] = {
-                    "lean": qd_overlay.get("lean"),
-                    "raw_lean": qd_overlay.get("raw_lean"),
-                    "conf": qd_overlay.get("conf"),
-                    "edge_vs_book": qd_overlay.get("edge_vs_book"),
-                    "fair_yes": qd_overlay.get("fair_yes"),
-                    "book_yes": qd_overlay.get("book_yes"),
-                    "composite_signal": qd_overlay.get("composite_signal"),
-                    "qd_online": qd_overlay.get("qd_online"),
-                    "reason": qd_overlay.get("reason"),
-                    "symbol": getattr(config, "quantdinger_symbol", "BTC/USDT"),
-                }
-                # Nudge: if desk is undecided but QD-BTC has a real edge, adopt lean
-                route_now = str(j.get("route") or "CONTINUE").upper()
-                side_now = str(j.get("side") or "SKIP").upper()
-                min_conf = float(getattr(config, "quantdinger_min_conf", 0.55))
-                min_edge = float(getattr(config, "quantdinger_min_edge", 0.04))
-                qd_lean = str(qd_overlay.get("lean") or "SKIP").upper()
-                qd_conf = float(qd_overlay.get("conf") or 0)
-                qd_edge = abs(float(qd_overlay.get("edge_vs_book") or 0))
-                if (
-                    qd_lean in {"YES", "NO"}
-                    and qd_conf >= min_conf
-                    and qd_edge >= min_edge
-                    and (side_now not in {"YES", "NO"} or route_now == "SKIP")
-                ):
-                    j["side"] = qd_lean
-                    j["action"] = qd_lean
-                    j["route"] = "CONTINUE"
-                    j["conf"] = max(float(j.get("conf") or 0), qd_conf)
-                    probs = dict(j.get("probabilities") or {})
-                    if qd_lean == "YES":
-                        probs["yes"] = round(max(float(probs.get("yes") or 0), qd_conf), 3)
-                    else:
-                        probs["no"] = round(max(float(probs.get("no") or 0), qd_conf), 3)
-                    j["probabilities"] = probs
-                    j["trade_action"] = (
-                        "BUY" if qd_lean == "YES" else "SELL"
-                    ) if str(j.get("trade_action") or "") in {"", "HOLD", "SKIP"} else j.get("trade_action")
-                    j["reason"] = (j.get("reason") or "") + f" | QD-BTC {qd_lean} {qd_conf:.2f}"
-                    j["decision_sources"] = list(dict.fromkeys(
-                        list(j.get("decision_sources") or []) + ["quantdinger-btc"]
-                    ))
-        except Exception as exc:  # noqa: BLE001
-            if isinstance(j, dict):
-                j["quantdinger_error"] = str(exc)[:160]
-
-    if isinstance(j, dict) and "decision_sources" not in j:
-        srcs = [str(j.get("judge_src") or "unknown")]
-        if j.get("quantdinger"):
-            srcs.append("quantdinger-btc")
-        j["decision_sources"] = srcs
-
-    # ---- Grokbot BTCC knowledge (fib/golden pocket + Hurst + hygiene) ----
-    btcc_board = None
-    btcc_ovl = None
-    try:
-        from .btcc_knowledge import btcc_signal_board, judgment_overlay_from_btcc, note_trade
-
-        btcc_board = btcc_signal_board()
-        btcc_ovl = judgment_overlay_from_btcc(btcc_board)
-        if isinstance(j, dict):
+    # Desks are attached for the HUD. They already went into the Jev snapshot.
+    # They do not change side, route, or confidence.
+    qd_overlay = desks.get("qd_overlay") or {}
+    btcc_ovl = desks.get("btcc_ovl") or {}
+    btcc_board = desks.get("btcc_board") or {}
+    if isinstance(j, dict):
+        if qd_overlay:
+            j["quantdinger"] = {
+                "lean": qd_overlay.get("lean"),
+                "raw_lean": qd_overlay.get("raw_lean"),
+                "conf": qd_overlay.get("conf"),
+                "edge_vs_book": qd_overlay.get("edge_vs_book"),
+                "fair_yes": qd_overlay.get("fair_yes"),
+                "book_yes": qd_overlay.get("book_yes"),
+                "composite_signal": qd_overlay.get("composite_signal"),
+                "qd_online": qd_overlay.get("qd_online"),
+                "reason": qd_overlay.get("reason"),
+                "symbol": getattr(config, "quantdinger_symbol", "BTC/USDT"),
+            }
+        elif desks.get("errors", {}).get("quantdinger"):
+            j["quantdinger_error"] = desks["errors"]["quantdinger"]
+        if btcc_ovl:
             j["btcc"] = {
                 "lean": btcc_ovl.get("lean"),
                 "raw_lean": btcc_ovl.get("raw_lean"),
@@ -326,55 +329,20 @@ def judge(force: bool = False) -> dict[str, Any]:
                 "edge_vs_book": btcc_ovl.get("edge_vs_book"),
                 "signals": btcc_ovl.get("signals"),
                 "reason": btcc_ovl.get("reason"),
+                "override": False,
+                "risk_mode": btcc_board.get("risk_mode") if isinstance(btcc_board, dict) else None,
             }
-            # Hygiene hard veto — OVERRIDE off unless BTCC_HYGIENE_ENFORCE
-            enforce_hyg = bool(getattr(config, "btcc_hygiene_enforce", False))
-            if (
-                enforce_hyg
-                and btcc_ovl.get("hygiene_veto")
-                and j.get("side") in {"YES", "NO"}
-            ):
-                j["side"] = "SKIP"
-                j["action"] = "SKIP"
-                j["trade_action"] = "HOLD"
-                j["route"] = "SKIP"
-                j["reason"] = (j.get("reason") or "") + " | BTCC_HYGIENE:" + ",".join(
-                    btcc_ovl.get("hygiene_flags") or []
-                )[:120]
-            # Adopt BTCC lean when confident enough (recover mode — take the shot)
-            elif (
-                str(btcc_ovl.get("lean") or "SKIP").upper() in {"YES", "NO"}
-                and float(btcc_ovl.get("conf") or 0) >= 0.55
-            ):
-                current_side = str(j.get("side") or "SKIP").upper()
-                qd = j.get("quantdinger") or {}
-                # if desk undecided OR BTCC setup is stronger, use BTCC
-                if current_side not in {"YES", "NO"} or str(btcc_ovl.get("setup") or "") in {
-                    "SETUP",
-                    "HIGH CONFLUENCE",
-                }:
-                    j["side"] = btcc_ovl["lean"]
-                    j["action"] = btcc_ovl["lean"]
-                    if str(j.get("route") or "") == "SKIP":
-                        j["route"] = "CONTINUE"
-                    j["conf"] = max(float(j.get("conf") or 0), float(btcc_ovl.get("conf") or 0))
-                    probs = dict(j.get("probabilities") or {})
-                    if btcc_ovl["lean"] == "YES":
-                        probs["yes"] = round(max(float(probs.get("yes") or 0), float(btcc_ovl.get("conf") or 0)), 3)
-                    else:
-                        probs["no"] = round(max(float(probs.get("no") or 0), float(btcc_ovl.get("conf") or 0)), 3)
-                    j["probabilities"] = probs
-                    if str(j.get("trade_action") or "") in {"", "HOLD", "SKIP"}:
-                        j["trade_action"] = "BUY" if btcc_ovl["lean"] == "YES" else "SELL"
-                    j["reason"] = (j.get("reason") or "") + f" | BTCC {btcc_ovl.get('setup')} {btcc_ovl['lean']}"
-            j["decision_sources"] = list(
-                dict.fromkeys(list(j.get("decision_sources") or []) + ["grokbot-btcc"])
-            )
-            j["btcc"]["override"] = not enforce_hyg
-            j["btcc"]["risk_mode"] = btcc_board.get("risk_mode") if btcc_board else None
-    except Exception as exc:  # noqa: BLE001
-        if isinstance(j, dict):
-            j["btcc_error"] = str(exc)[:160]
+        elif desks.get("errors", {}).get("btcc"):
+            j["btcc_error"] = desks["errors"]["btcc"]
+        j["ai_trader"] = desks.get("ai") or {"lean": "SKIP", "error": desks.get("errors", {}).get("ai_trader")}
+        srcs = [str(j.get("judge_src") or "unknown")]
+        if j.get("quantdinger"):
+            srcs.append("quantdinger-btc")
+        if j.get("btcc"):
+            srcs.append("grokbot-btcc")
+        if (j.get("ai_trader") or {}).get("lean") not in {None, "SKIP"}:
+            srcs.append("ai-trader")
+        j["decision_sources"] = list(dict.fromkeys(srcs))
 
     # ---- Layer 2 escalate stub (optional NVIDIA/kimi or other reasoning) ----
     # JEV never owns execution; escalated cases without L2 are blocked by risk gate.
@@ -427,13 +395,6 @@ def judge(force: bool = False) -> dict[str, Any]:
         j["action"] = "SKIP"
         j["trade_action"] = "HOLD"
         j["reason"] = (j.get("reason") or "") + " | RISK_BLOCK:" + ",".join(risk.get("reasons") or [])[:160]
-
-    try:
-        from .ai_trader import btc_crowd
-
-        j["ai_trader"] = btc_crowd()
-    except Exception as exc:  # noqa: BLE001
-        j["ai_trader"] = {"lean": "SKIP", "error": str(exc)[:160]}
 
     j["architecture_pipeline"] = [
         "L1-deterministic",

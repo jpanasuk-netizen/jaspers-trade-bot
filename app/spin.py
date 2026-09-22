@@ -190,7 +190,7 @@ def day_pnl() -> float:
 
 
 def day_halted() -> bool:
-    return abs(day_pnl()) >= config.day_stop_usd
+    return day_pnl() <= -config.day_loss_stop_usd()
 
 
 def jev_to_side(j: dict[str, Any]) -> tuple[str, float, float, str]:
@@ -465,40 +465,22 @@ def salvage_reason(
     active: dict[str, Any],
     seconds_left: Any,
 ) -> str | None:
-    """Why an open ticket should be sold before settlement. None means hold.
+    """Sell only when the book prices the other side above 80%.
 
-    One noisy tick is not enough. The tape has to flip and something else
-    (the book, the panel, or a collapsed bid) has to agree we are the loser,
-    and the bid still has to pay at least 5 cents.
+    A 70% flip is not enough. The unused arguments stay so older callers
+    still match. None means hold the original ticket.
     """
-    secs = _num(seconds_left)
-    if secs is not None and secs <= 8:
+    del entry, spot, open_px, judgment, seconds_left
+    if bid is None or bid < 0.01 or bid > 0.99:
         return None
-    if bid is None or bid < 0.05 or bid > 0.99:
+    yes = _book_yes(active)
+    if yes is None:
         return None
-    paid = _num(entry)
-    marks: list[str] = []
-    tape = tape_side(spot, open_px)
-    if tape and tape != side:
-        marks.append(f"tape flipped to {tape}")
-    fair = _book_yes(active)
-    if fair is not None:
-        ours = fair if side == "YES" else 1.0 - fair
-        if ours <= 0.42:
-            marks.append(f"book marks {side} at {ours:.2f}")
-    votes = context_votes(judgment, active)
-    oppose = [v for v in votes if v["side"] != side]
-    agree = [v for v in votes if v["side"] == side]
-    if oppose and len(oppose) > len(agree):
-        marks.append("panel flipped to " + ",".join(f"{v['src']}={v['side']}" for v in oppose))
-    if paid is not None and bid + 0.12 < paid:
-        marks.append(f"bid {bid:.2f} is below entry {paid:.2f}")
-    flipped = any(m.startswith("tape flipped") for m in marks)
-    if flipped and len(marks) >= 2:
-        return "salvage: " + "; ".join(marks)
-    if len(marks) >= 3:
-        return "salvage: " + "; ".join(marks)
-    return None
+    other = (1.0 - yes) if side == "YES" else yes
+    if other <= 0.80:
+        return None
+    opp = "NO" if side == "YES" else "YES"
+    return f"other side {opp} at {other:.0%} > 80%"
 
 
 def _maybe_salvage(
@@ -743,7 +725,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             "entry_ceil": config.entry_ceil,
             "edge_floor": config.edge_floor,
             "trade_on_lean": config.trade_on_lean,
-            "day_stop_usd": config.day_stop_usd,
+            "day_stop_usd": config.day_loss_stop_usd(),
             "max_stake_usd": config.max_stake_usd,
             "martingale": bool(config.martingale_enabled),
         },
@@ -790,11 +772,14 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         rec["argus"] = {"promote": False, "reason": str(exc)[:160]}
 
-    # Hold the original ticket. The two live salvages both sold a YES that
-    # then settled YES, so selling the stake gave back a winner.
+    if mode == "LIVE" and ticker:
+        exited = _maybe_salvage(rec, j, active, paths)
+        if exited is not None:
+            return exited
+
     if day_halted():
         rec["result"] = "DAY_STOP"
-        rec["reason"] = f"day pnl {day_pnl():.2f} hit stop"
+        rec["reason"] = f"day loss {day_pnl():.2f} hit {config.day_loss_stop_usd():.2f}"
         _remember_skip(rec)
         return rec
 
@@ -877,7 +862,9 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                 rec["shard"] = shard_cash
                 _remember_skip(rec)
                 return rec
-            pick = kalshi_live.sized_quote(jev_side, active, cash_f, max_count=1.0)
+            pick = kalshi_live.sized_quote(
+                jev_side, active, cash_f, max_count=float(config.order_count)
+            )
             one = kalshi_live.contract_quote(jev_side, active)
             if one and float(one.get("ask") or 1) > config.entry_ceil + 1e-9:
                 rec["result"] = "SKIP_ENTRY"
@@ -885,6 +872,17 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                     f"penny_jev: {jev_side} ask {one.get('ask')} > {config.entry_ceil:.2f}"
                 )
                 rec["quote"] = one
+                rec["shard"] = shard_cash
+                _remember_skip(rec)
+                return rec
+            want_n = float(config.order_count)
+            if pick and float(pick["count"]) + 1e-9 < want_n:
+                rec["result"] = "SKIP_WIN_TOO_SMALL"
+                rec["reason"] = (
+                    f"penny_jev: need {want_n:.0f} {jev_side}, cash ${cash_f:.2f} "
+                    f"only covers {pick['count']}"
+                )
+                rec["quote"] = pick
                 rec["shard"] = shard_cash
                 _remember_skip(rec)
                 return rec
@@ -993,6 +991,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         return rec
 
     cash = plan.get("cash")
+    live_count = None
     if mode == "LIVE":
         # LIVE pennies: 1-lot = the ASK + Kalshi 1¢-style fee. Not short-YES margin.
         try:
@@ -1008,52 +1007,42 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             if cash_f <= 0:
                 cash_f = float(mg.kalshi_cash() or 0)
             plan = mg.plan_stake(cash_f)
-            q = kalshi_live.contract_quote(side, active)
-            if q and cash_f + 1e-9 >= q["need"]:
-                pick = q
-            else:
-                src = q or {}
-                need = src.get("need")
-                ask = src.get("ask")
-                fee = src.get("fee")
-                win_pay = round(1.0 - float(ask), 4) if ask is not None else None
+            want_n = float(config.order_count)
+            pick = kalshi_live.sized_quote(side, active, cash_f, max_count=want_n)
+            got = float(pick["count"]) if pick else 0.0
+            if not pick or got + 1e-9 < want_n:
+                src = pick or kalshi_live.contract_quote(side, active) or {}
                 rec["result"] = "SKIP_WIN_TOO_SMALL"
                 rec["reason"] = (
-                    f"not flipping off {side}. "
-                    f"1-lot {side} @ {ask if ask is not None else '—'} "
-                    f"+fee {fee if fee is not None else '—'} "
-                    f"needs ${need if need is not None else '—'}, cash ${cash_f:.4f}. "
-                    f"The cheaper opposite side is how the last flips lost."
+                    f"need {want_n:.0f} {side} @ {src.get('ask', '—')} "
+                    f"+fee, cash ${cash_f:.2f} covers {got:.2f}. "
+                    f"Not buying a smaller clip, and not flipping."
                 )
                 rec["shard"] = shard_cash
                 rec["quote"] = src
-                rec["win_pay"] = win_pay
                 _remember_skip(rec)
                 return rec
             entry = float(pick["ask"])
             stake = float(pick["need"])
+            live_count = float(pick["count"])
             rec["win_pay"] = round(1.0 - entry, 4)
-            lot = float(pick["need"])
-            wanted = float(plan.get("stake") or lot)
-            lots = max(1, int(wanted / lot)) if lot > 0 else 1
-            while lots > 1 and lots * lot > cash_f + 1e-9:
-                lots -= 1
-            stake = round(lots * lot, 4)
             rec["stake_bumped"] = {
                 "stake": stake,
                 "unit": pick["unit"],
                 "fee": pick["fee"],
                 "need": pick["need"],
-                "lots": lots,
-                "wanted": round(wanted, 4),
+                "count": live_count,
                 "entry": entry,
                 "cash": cash_f,
                 "side": side,
                 "win_pay": rec["win_pay"],
-                "next_double": round(stake * 2, 4),
             }
         except Exception as exc:  # noqa: BLE001
             rec["stake_error"] = str(exc)[:200]
+            rec["result"] = "SKIP"
+            rec["reason"] = rec["stake_error"]
+            _remember_skip(rec)
+            return rec
     else:
         if entry > 0 and stake < entry and stake < 0.05:
             rec["result"] = "SKIP_WIN_TOO_SMALL"
@@ -1073,7 +1062,13 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         try:
             from .kalshi_live import place_order
 
-            result = place_order(ticker=ticker, side=side, market=active, stake_usd=stake)
+            result = place_order(
+                ticker=ticker,
+                side=side,
+                market=active,
+                stake_usd=stake,
+                count=live_count,
+            )
         except Exception as exc:  # noqa: BLE001
             rec["mode"] = "LIVE"
             rec["result"] = "LIVE_ERROR"

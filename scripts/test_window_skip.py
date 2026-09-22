@@ -51,14 +51,14 @@ def main() -> None:
     cut = spin.salvage_reason(
         "YES",
         0.62,
-        0.28,
+        0.16,
         100.0,
         110.0,
         {},
-        {"yes_bid": 0.28, "yes_ask": 0.30, "no_ask": 0.72},
+        {"yes_bid": 0.15, "yes_ask": 0.18, "no_ask": 0.85},
         100,
     )
-    assert cut and "tape flipped" in cut, cut
+    assert cut and "80%" in cut, cut
     hold = spin.salvage_reason(
         "YES",
         0.55,
@@ -70,10 +70,10 @@ def main() -> None:
         100,
     )
     assert hold is None, hold
-    dust = spin.salvage_reason(
-        "YES", 0.62, 0.02, 100.0, 110.0, {}, {"yes_bid": 0.02, "yes_ask": 0.04}, 100
+    almost = spin.salvage_reason(
+        "NO", 0.60, 0.20, 100.0, 110.0, {}, {"yes_bid": 0.78, "yes_ask": 0.80}, 100
     )
-    assert dust is None, dust
+    assert almost is None, almost
     assert spin.fill_pnl({"stake_usd": 2.0, "quote": {"count": 3}}, True) == 1.0
     assert spin.fill_pnl({"stake_usd": 2.0, "quote": {"count": 3}}, False) == -2.0
     print("window skip ok")

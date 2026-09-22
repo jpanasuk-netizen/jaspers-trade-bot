@@ -760,21 +760,23 @@ function render(s){
   }
 }
 
-let _loadCtl=null;
+let _loading=false;
 async function load(){
-  if(_loadCtl) _loadCtl.abort();
+  if(_loading) return;
+  _loading=true;
   const ctl=new AbortController();
-  _loadCtl=ctl;
-  const t=setTimeout(function(){ctl.abort();},2500);
+  const t=setTimeout(function(){ctl.abort();},8000);
   try{
     const r=await fetch("/api/state?ts="+Date.now(),{cache:"no-store",signal:ctl.signal});
     const data=await r.json();
     render(data);
+    $("conn").textContent=(data&&data.connection)||"live";
   }catch(e){
     if(e && e.name==="AbortError") $("conn").textContent="slow";
     else $("conn").textContent="offline";
   }finally{
     clearTimeout(t);
+    _loading=false;
   }
 }
 

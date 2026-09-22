@@ -13,6 +13,7 @@ from .market import snapshot
 from .sentiment import get_sentiment
 
 _LOCK = threading.Lock()
+_EXTRAS_AT = 0.0
 _STATE: dict[str, Any] = {
     "started_at": int(time.time() * 1000),
     "connection": "connecting",
@@ -82,6 +83,18 @@ def _hud_extras() -> dict[str, Any]:
     return extras
 
 
+def refresh_hud_extras(force: bool = False) -> None:
+    """Charts and side panels live in the trading process. Refresh them on a timer."""
+    global _EXTRAS_AT
+    now = time.time()
+    if not force and now - _EXTRAS_AT < 5.0:
+        return
+    extras = _hud_extras()
+    with _LOCK:
+        _STATE["hud_extras"] = extras
+    _EXTRAS_AT = now
+
+
 def _slim_judgment(j: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(j, dict):
         return {}
@@ -95,6 +108,26 @@ def _slim_judgment(j: dict[str, Any] | None) -> dict[str, Any]:
         "open_of_window": j.get("open_of_window"),
         "delta_from_open": j.get("delta_from_open"),
         "fair_yes": (j.get("quantdinger") or {}).get("fair_yes") or j.get("fair_yes"),
+        "layer1": _slim_layer1(j.get("layer1")),
+    }
+
+
+def _slim_layer1(layer1: Any) -> dict[str, Any]:
+    """The six desk gauges. The full feature blob stays off the HUD payload."""
+    if not isinstance(layer1, dict):
+        return {}
+    probs = layer1.get("regime_probs")
+    if not isinstance(probs, dict):
+        probs = {}
+    return {
+        "regime": layer1.get("regime"),
+        "regime_probs": {k: probs.get(k) for k in ("trending", "mean_revert", "high_vol", "crisis") if k in probs},
+        "bocpd_alarm": layer1.get("bocpd_alarm"),
+        "ofi_proxy": layer1.get("ofi_proxy"),
+        "vpin_proxy": layer1.get("vpin_proxy"),
+        "vol_proxy": layer1.get("vol_proxy"),
+        "liquidity_stressed_proxy": layer1.get("liquidity_stressed_proxy"),
+        "triggers": list(layer1.get("triggers") or [])[:8],
     }
 
 
@@ -134,7 +167,7 @@ def current() -> dict[str, Any]:
             "connection": _STATE["connection"],
             "latest": _STATE["latest"],
             "events": [
-                {**e, "spin": _slim_spin(e.get("spin") if isinstance(e, dict) else None)}
+                {"ts": e.get("ts"), "spin": _slim_spin(e.get("spin") if isinstance(e, dict) else None)}
                 for e in list(_STATE["events"][-12:])
                 if isinstance(e, dict)
             ],
@@ -297,6 +330,7 @@ def tick(do_spin: bool = True) -> dict[str, Any]:
             _STATE["latest"] = event
             _STATE["events"] = (_STATE["events"] + [event])[-200:]
             _STATE["error"] = None
+        refresh_hud_extras()
         _write_hud_file()
         return current()
     except Exception as exc:  # noqa: BLE001

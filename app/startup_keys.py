@@ -5,6 +5,7 @@ desktop exe does, and only for keys that are missing.
 """
 from __future__ import annotations
 
+import getpass
 import os
 import sys
 from pathlib import Path
@@ -75,7 +76,28 @@ def _current(name: str, saved: dict[str, str]) -> str:
     return (os.environ.get(name) or saved.get(name) or "").strip()
 
 
+def _key_id_on_disk() -> bool:
+    """The desk also reads key_id.txt from the Kalshi secrets folders."""
+    folders = [
+        Path.home() / ".kalshi",
+        Path.home() / ".beat15m",
+        Path(r"\\wsl$\Ubuntu\home\jpanasuk\.kalshi"),
+        Path(r"\\wsl$\Ubuntu\home\jpanasuk\.beat15m"),
+        _root() / "secrets",
+    ]
+    for folder in folders:
+        path = folder / "key_id.txt"
+        try:
+            if path.is_file() and path.read_text(encoding="utf-8").strip():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _usable(name: str, value: str) -> bool:
+    if name == "KALSHI_API_KEY_ID" and not value:
+        return _key_id_on_disk()
     if not value:
         return False
     if name == "KALSHI_PRIVATE_KEY_PATH":
@@ -88,6 +110,10 @@ def ensure_keys() -> None:
         return
     env_path = _root() / ".env"
     saved = _read_env(env_path)
+    force = os.environ.get("JASPER_FORCE_PROMPT", "").strip().lower() in {"1", "true", "yes"}
+    if not force and all(_usable(name, _current(name, saved)) for name, _label, _secret in REQUIRED):
+        print("Using the saved keys.", flush=True)
+        return
     updates: dict[str, str] = {}
     print("", flush=True)
     print("Jasper desk needs three keys. Press Enter to keep one that is already saved.", flush=True)
@@ -99,8 +125,6 @@ def ensure_keys() -> None:
             prompt = f"{label}{hint}: "
             try:
                 if secret:
-                    import getpass
-
                     typed = getpass.getpass(prompt)
                 else:
                     typed = input(prompt)
