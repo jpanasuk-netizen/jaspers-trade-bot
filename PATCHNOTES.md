@@ -47,6 +47,16 @@ The live Kalshi BTC 15-minute desk. Jev names the side. Code places the order. T
 - Settings page and settlement helper that were sitting untracked.
 - `websockets` so the fast price feed can use a socket instead of only REST.
 
+## Desktop exe
+
+`Kalshi 15m Desk.exe` asks for any missing key before it starts the desk:
+
+- TypeSafe Jev API key
+- Kalshi API key id
+- Full path to the Kalshi private key file
+
+Press Enter to keep a key that is already saved. A headless start does not ask.
+
 ## Not in the commit
 
 - `.env` stays on the machine. The knobs that matter are `ENTRY_CEIL=0.76`, `MAX_VOL_PROXY=2.8`, and `JEV_TIMEOUT_SEC=2.5`.

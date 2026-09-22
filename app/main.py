@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .startup_keys import ensure_keys
+
+ensure_keys()
+
 from . import state
 from .config import config
 from .judge import judge
