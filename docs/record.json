@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-09-24T04:30:12.162717+00:00",
+  "updated_at": "2026-09-24T04:45:07.905008+00:00",
   "wins": 15,
   "losses": 11,
   "pushes": 0,
-  "pnl_usd": -0.8554,
-  "fills": 27,
-  "last_side": "YES",
-  "last_result": "LIVE_FILLED",
+  "pnl_usd": -3.2954,
+  "fills": 26,
+  "last_side": "NO",
+  "last_result": "LIVE_SENT_NO_FILL",
   "recent": [
     {
       "ts": "2026-09-24T04:17:19.974700+00:00",
