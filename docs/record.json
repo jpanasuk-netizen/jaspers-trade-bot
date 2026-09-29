@@ -1,18 +1,18 @@
 {
-  "updated_at": "2026-09-29T09:21:54.196385+00:00",
+  "updated_at": "2026-09-29T09:30:07.915515+00:00",
   "wins": 41,
   "losses": 27,
   "pushes": 0,
   "pnl_usd": -10.3823,
   "fills": 69,
   "last_side": "YES",
-  "last_result": "LIVE_FILLED",
+  "last_result": "CUSTOMER_SELL",
   "recent": [
     {
       "ts": "2026-09-29T09:21:50.617203+00:00",
       "side": "YES",
       "entry": 0.78,
-      "won": null
+      "won": true
     },
     {
       "ts": "2026-09-29T08:05:04.779712+00:00",
