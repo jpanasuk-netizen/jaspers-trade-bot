@@ -41,5 +41,6 @@ KILL
 # One-off local probes
 scripts/_*.py
 
-# ETH 15m research cache — re-downloadable candles. Hashes live in the manifest.
+# Research candle caches — re-downloadable. Hashes live in each manifest.
 research/eth15m/cache/
+research/btc15m/cache/
