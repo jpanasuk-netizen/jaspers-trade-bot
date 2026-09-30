@@ -1,0 +1,233 @@
+{
+  "base_rate": {
+    "down": 52780,
+    "push": 154,
+    "rows": 106400,
+    "up": 53466,
+    "up_rate": 0.5032283568322572
+  },
+  "bounds": {
+    "confirm": [
+      106399,
+      212799
+    ]
+  },
+  "candle_sha256": "b5f17c442559b7f23444045869119775d8ccd50cd2e16549e2d30d02fd6bab29",
+  "design_pass_count": 5,
+  "results": [
+    {
+      "clears_breakeven_95": true,
+      "design_trades": 4260,
+      "design_win_rate": 0.5884976525821596,
+      "eligible": true,
+      "fail_reason": null,
+      "family": "streak",
+      "flat_ev_per_trade": 0.04219048063462438,
+      "flat_pnl_sum": 180.8236000000001,
+      "half_kelly_fraction": 0.036712393450017075,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.5884976525821596,
+      "log_growth_per_trade": 0.0010131822169736323,
+      "losses": 1803,
+      "max_drawdown": 0.8072434252088005,
+      "name": "streak_fade_5",
+      "pass": true,
+      "pushes": 8,
+      "slice": [
+        106399,
+        212799
+      ],
+      "terminal_bankroll": 76.899469809963,
+      "trades": 4286,
+      "wilson_high": 0.5940302037415586,
+      "wilson_low": 0.5644838075916336,
+      "win_rate": 0.5793280447970135,
+      "wins": 2483
+    },
+    {
+      "clears_breakeven_95": true,
+      "design_trades": 1731,
+      "design_win_rate": 0.584055459272097,
+      "eligible": true,
+      "fail_reason": null,
+      "family": "streak",
+      "flat_ev_per_trade": 0.06158020022246945,
+      "flat_pnl_sum": 110.71820000000007,
+      "half_kelly_fraction": 0.03171117506240596,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.584055459272097,
+      "log_growth_per_trade": 0.0015554514202306398,
+      "losses": 737,
+      "max_drawdown": 0.5262412121392225,
+      "name": "streak_fade_6",
+      "pass": true,
+      "pushes": 5,
+      "slice": [
+        106399,
+        212799
+      ],
+      "terminal_bankroll": 16.390495982327007,
+      "trades": 1798,
+      "wilson_high": 0.6126179052614948,
+      "wilson_low": 0.5671981229620737,
+      "win_rate": 0.5901001112347052,
+      "wins": 1061
+    },
+    {
+      "clears_breakeven_95": false,
+      "design_trades": 1284,
+      "design_win_rate": 0.5911214953271028,
+      "eligible": true,
+      "fail_reason": "win_rate",
+      "family": "rsi",
+      "flat_ev_per_trade": -0.031054545454545425,
+      "flat_pnl_sum": -40.993799999999965,
+      "half_kelly_fraction": 0.039666432067040944,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.5911214953271028,
+      "log_growth_per_trade": -0.001870387721898,
+      "losses": 609,
+      "max_drawdown": 0.9829964735256332,
+      "name": "rsi_fade_14_80_20",
+      "pass": false,
+      "pushes": 3,
+      "slice": [
+        106399,
+        212799
+      ],
+      "terminal_bankroll": 0.08467695494587103,
+      "trades": 1320,
+      "wilson_high": 0.5653783932804808,
+      "wilson_low": 0.5116700995301395,
+      "win_rate": 0.5386363636363637,
+      "wins": 711
+    },
+    {
+      "clears_breakeven_95": false,
+      "design_trades": 1556,
+      "design_win_rate": 0.5732647814910026,
+      "eligible": true,
+      "fail_reason": "win_rate",
+      "family": "rsi",
+      "flat_ev_per_trade": -0.010243328929986749,
+      "flat_pnl_sum": -15.509599999999939,
+      "half_kelly_fraction": 0.019562551090695938,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.5732647814910026,
+      "log_growth_per_trade": -0.0003542978306140648,
+      "losses": 681,
+      "max_drawdown": 0.7344905884991765,
+      "name": "rsi_fade_21_75_25",
+      "pass": false,
+      "pushes": 2,
+      "slice": [
+        106399,
+        212799
+      ],
+      "terminal_bankroll": 0.5848458822819956,
+      "trades": 1514,
+      "wilson_high": 0.5750986674053019,
+      "wilson_low": 0.525043534521434,
+      "win_rate": 0.5501981505944518,
+      "wins": 833
+    },
+    {
+      "clears_breakeven_95": false,
+      "design_trades": 7599,
+      "design_win_rate": 0.5740228977497039,
+      "eligible": true,
+      "fail_reason": "win_rate",
+      "family": "vwap",
+      "flat_ev_per_trade": -0.0051468964787987175,
+      "flat_pnl_sum": -48.678999999999476,
+      "half_kelly_fraction": 0.020416072022433777,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.5740228977497039,
+      "log_growth_per_trade": -0.00027250514760418726,
+      "losses": 4227,
+      "max_drawdown": 0.9984653337296818,
+      "name": "vwap_fade_16_2p0",
+      "pass": false,
+      "pushes": 8,
+      "slice": [
+        106399,
+        212799
+      ],
+      "terminal_bankroll": 0.07599549772639212,
+      "trades": 9457,
+      "wilson_high": 0.5630265399043195,
+      "wilson_low": 0.5429893984663219,
+      "win_rate": 0.5530295019562229,
+      "wins": 5230
+    }
+  ],
+  "source_hash": "7b42bb55dc2f879c25a0ddb16d009f2b1f6dbefb662ef11aa6645a94f34f815a",
+  "stage": "confirm",
+  "summary": {
+    "above_055": 4,
+    "above_057": 2,
+    "above_060": 0,
+    "eligible": 5,
+    "family_median": {
+      "rsi": 0.5501981505944518,
+      "streak": 0.5901001112347052,
+      "vwap": 0.5530295019562229
+    },
+    "max_win_rate": 0.5901001112347052,
+    "median_win_rate": 0.5530295019562229,
+    "passed": 2,
+    "top": [
+      {
+        "family": "streak",
+        "flat_ev_per_trade": 0.06158020022246945,
+        "max_drawdown": 0.5262412121392225,
+        "name": "streak_fade_6",
+        "terminal_bankroll": 16.390495982327007,
+        "trades": 1798,
+        "win_rate": 0.5901001112347052
+      },
+      {
+        "family": "streak",
+        "flat_ev_per_trade": 0.04219048063462438,
+        "max_drawdown": 0.8072434252088005,
+        "name": "streak_fade_5",
+        "terminal_bankroll": 76.899469809963,
+        "trades": 4286,
+        "win_rate": 0.5793280447970135
+      },
+      {
+        "family": "vwap",
+        "flat_ev_per_trade": -0.0051468964787987175,
+        "max_drawdown": 0.9984653337296818,
+        "name": "vwap_fade_16_2p0",
+        "terminal_bankroll": 0.07599549772639212,
+        "trades": 9457,
+        "win_rate": 0.5530295019562229
+      },
+      {
+        "family": "rsi",
+        "flat_ev_per_trade": -0.010243328929986749,
+        "max_drawdown": 0.7344905884991765,
+        "name": "rsi_fade_21_75_25",
+        "terminal_bankroll": 0.5848458822819956,
+        "trades": 1514,
+        "win_rate": 0.5501981505944518
+      },
+      {
+        "family": "rsi",
+        "flat_ev_per_trade": -0.031054545454545425,
+        "max_drawdown": 0.9829964735256332,
+        "name": "rsi_fade_14_80_20",
+        "terminal_bankroll": 0.08467695494587103,
+        "trades": 1320,
+        "win_rate": 0.5386363636363637
+      }
+    ],
+    "with_min_trades": 5
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "base_rate": {
+    "down": 52663,
+    "push": 95,
+    "rows": 106399,
+    "up": 53641,
+    "up_rate": 0.504600015051174
+  },
+  "bounds": {
+    "sealed": [
+      212799,
+      319198
+    ]
+  },
+  "candle_sha256": "b5f17c442559b7f23444045869119775d8ccd50cd2e16549e2d30d02fd6bab29",
+  "confirm_pass_count": 2,
+  "kept": [
+    "streak_fade_5",
+    "streak_fade_6"
+  ],
+  "results": [
+    {
+      "clears_breakeven_95": true,
+      "confirm_trades": 4286,
+      "confirm_win_rate": 0.5793280447970135,
+      "design_win_rate": 0.5884976525821596,
+      "eligible": true,
+      "fail_reason": null,
+      "family": "streak",
+      "flat_ev_per_trade": 0.045272832369942215,
+      "flat_pnl_sum": 195.80080000000007,
+      "half_kelly_fraction": 0.036712393450017075,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.5884976525821596,
+      "log_growth_per_trade": 0.0011268093386349088,
+      "losses": 1812,
+      "max_drawdown": 0.8494419242411677,
+      "name": "streak_fade_5",
+      "pass": true,
+      "pushes": 7,
+      "slice": [
+        212799,
+        319198
+      ],
+      "terminal_bankroll": 130.77135147276928,
+      "trades": 4325,
+      "wilson_high": 0.5956667605496638,
+      "wilson_low": 0.5662703267302217,
+      "win_rate": 0.5810404624277457,
+      "wins": 2513
+    },
+    {
+      "clears_breakeven_95": true,
+      "confirm_trades": 1798,
+      "confirm_win_rate": 0.5901001112347052,
+      "design_win_rate": 0.584055459272097,
+      "eligible": true,
+      "fail_reason": null,
+      "family": "streak",
+      "flat_ev_per_trade": 0.0678704583103258,
+      "flat_pnl_sum": 122.91280000000002,
+      "half_kelly_fraction": 0.03171117506240596,
+      "kelly_capped": false,
+      "kelly_in_sample": false,
+      "kelly_p": 0.584055459272097,
+      "log_growth_per_trade": 0.00175565838728514,
+      "losses": 736,
+      "max_drawdown": 0.416767126684098,
+      "name": "streak_fade_6",
+      "pass": true,
+      "pushes": 1,
+      "slice": [
+        212799,
+        319198
+      ],
+      "terminal_bankroll": 24.03466923326611,
+      "trades": 1811,
+      "wilson_high": 0.61599500134588,
+      "wilson_low": 0.5707981601068882,
+      "win_rate": 0.5935946990612921,
+      "wins": 1075
+    }
+  ],
+  "sealed_sha256": "02b7695550f1160754102f75e65f136584a85595681651c060fe385da74c6d1a",
+  "source_hash": "7b42bb55dc2f879c25a0ddb16d009f2b1f6dbefb662ef11aa6645a94f34f815a",
+  "stage": "sealed",
+  "summary": {
+    "above_055": 2,
+    "above_057": 2,
+    "above_060": 0,
+    "eligible": 2,
+    "family_median": {
+      "streak": 0.5935946990612921
+    },
+    "max_win_rate": 0.5935946990612921,
+    "median_win_rate": 0.5810404624277457,
+    "passed": 2,
+    "top": [
+      {
+        "family": "streak",
+        "flat_ev_per_trade": 0.0678704583103258,
+        "max_drawdown": 0.416767126684098,
+        "name": "streak_fade_6",
+        "terminal_bankroll": 24.03466923326611,
+        "trades": 1811,
+        "win_rate": 0.5935946990612921
+      },
+      {
+        "family": "streak",
+        "flat_ev_per_trade": 0.045272832369942215,
+        "max_drawdown": 0.8494419242411677,
+        "name": "streak_fade_5",
+        "terminal_bankroll": 130.77135147276928,
+        "trades": 4325,
+        "win_rate": 0.5810404624277457
+      }
+    ],
+    "with_min_trades": 2
+  }
+}
