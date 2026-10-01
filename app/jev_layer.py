@@ -78,6 +78,48 @@ def _score_payload(ans: Any, levels: list[str]) -> tuple[float, str]:
     return sc_f, levels[idx]
 
 
+
+def _px_ok(v: Any) -> float | None:
+    """Strip junk prints (0.001 / 0.999). A fake bid is not market certainty."""
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x > 1.5:
+        x = x / 100.0
+    if x < 0.01 or x > 0.99:
+        return None
+    return x
+
+
+def _clean_book(**raw: Any) -> dict[str, Any]:
+    out = {
+        "yes_mid": _px_ok(raw.get("yes_mid")),
+        "yes_ask": _px_ok(raw.get("yes_ask")),
+        "yes_bid": _px_ok(raw.get("yes_bid")),
+        "no_ask": _px_ok(raw.get("no_ask")),
+        "no_bid": _px_ok(raw.get("no_bid")),
+        "book_spread": raw.get("book_spread"),
+    }
+    yb, ya = out["yes_bid"], out["yes_ask"]
+    if yb is not None and ya is not None and yb > ya:
+        # crossed after sanitize — drop both so the judge cannot pick a false edge
+        out["yes_bid"] = None
+        out["yes_ask"] = None
+        yb, ya = None, None
+    if yb is not None and ya is not None and yb <= ya:
+        # Always recompute mid from a clean two-sided print.
+        out["yes_mid"] = round((yb + ya) / 2.0, 4)
+    elif yb is not None and ya is None:
+        out["yes_mid"] = yb
+    elif ya is not None and yb is None:
+        out["yes_mid"] = ya
+    else:
+        out["yes_mid"] = None
+    return out
+
 def build_jev_state(features: dict[str, Any], social_sample: list[Any] | None = None) -> dict[str, Any]:
     """Compact numeric state. Pre-decision facts only.
 
@@ -97,14 +139,14 @@ def build_jev_state(features: dict[str, Any], social_sample: list[Any] | None = 
         "price": features.get("price"),
         "delta_from_open": features.get("delta_from_open"),
         "delta_pct": features.get("delta_pct"),
-        "kalshi": {
-            "yes_mid": features.get("yes_mid"),
-            "yes_ask": features.get("yes_ask"),
-            "yes_bid": features.get("yes_bid"),
-            "no_ask": features.get("no_ask"),
-            "no_bid": features.get("no_bid"),
-            "book_spread": features.get("book_spread"),
-        },
+        "kalshi": _clean_book(
+            yes_mid=features.get("yes_mid"),
+            yes_ask=features.get("yes_ask"),
+            yes_bid=features.get("yes_bid"),
+            no_ask=features.get("no_ask"),
+            no_bid=features.get("no_bid"),
+            book_spread=features.get("book_spread"),
+        ),
         "microstructure": {
             "rsi_14": features.get("rsi_14"),
             "funding_rate_pct": features.get("funding_rate_pct"),
@@ -144,15 +186,14 @@ def build_battery_questions() -> dict[str, Any] | None:
         # Regime confirm (architecture: is this a real regime shift?)
         "regime_confirm": Choice(
             instructions=(
-                "Using `layer1_stats` and price/momentum fields, what regime best "
-                "describes this BTC 15m Kalshi window state right now?"
+                "Confirm the filtered HMM label in `layer1_stats.regime`. "
+                "That label is quiet, informed_flow, or thin_liquidity. "
+                "Do not invent another regime. Code owns the size ceiling."
             ),
             criteria={
-                "trending": "Directional continuation is the dominant structure.",
-                "mean_reverting": "Chop / fade / range is the dominant structure.",
-                "chaotic": "No stable structure; book and flow disagree.",
-                "high_vol": "Volatility expansion without a clean directional edge.",
-                "crisis": "Disorderly move, panic/euphoria, or stress regime.",
+                "quiet": "Low volatility and balanced flow.",
+                "informed_flow": "Directional flow with higher price impact.",
+                "thin_liquidity": "Wide spread or shallow depth.",
             },
         ),
         "toxic_flow": Noul(
@@ -195,8 +236,8 @@ def build_battery_questions() -> dict[str, Any] | None:
             ),
             criteria={
                 "true": (
-                    "Escalate: regime crisis, BOCPD shock, toxic flow, stale data, "
-                    "or high-stakes ambiguity."
+                    "Escalate: thin book, pin near resolution, BOCPD shock, toxic flow, "
+                    "stale data, or high-stakes ambiguity."
                 ),
                 "false": "Fast typed judgment is sufficient for triage.",
             },
@@ -213,6 +254,97 @@ def build_battery_questions() -> dict[str, Any] | None:
                 "YES": "Settlement likely above open_of_window.",
                 "NO": "Settlement likely below open_of_window.",
                 "SKIP": "No clear edge or conflicting state.",
+            },
+        ),
+        # ── Future of the remaining window (JEV foresight) ──
+        "next_big_move": Choice(
+            instructions=(
+                "Look at the REST of this 15m window as a path problem, not just the "
+                "settlement tick. Given `delta_from_open`, `seconds_left`, regime, OFI, "
+                "BOCPD, and the book: is the next sharp move (a ±0.15%+ impulse) more "
+                "likely UP, DOWN, or will price stay quiet until close? "
+                "After a dump, UP means bounce/short-squeeze. After a pump, DOWN means "
+                "fade/flush. Be honest — if the path is a coin flip, pick QUIET."
+            ),
+            criteria={
+                "UP": "Another impulse higher (bounce after dump, or continuation after pump) is the most likely next sharp move.",
+                "DOWN": "Another impulse lower (flush after pump, or continuation after dump) is the most likely next sharp move.",
+                "QUIET": "No sharp impulse before this window closes; grind or mean-revert in place.",
+            },
+        ),
+        "will_bounce": Noul(
+            instructions=(
+                "Will price MEAN-REVERT (bounce against the current Δfrom_open direction) "
+                "before this window settles? True = fade the current move is more likely "
+                "than continuation. False = continuation stays in charge. "
+                "Read `delta_from_open`, `seconds_left`, ofi, regime, and squeeze risk."
+            ),
+            criteria={
+                "true": "Expect a bounce / reversal against the current Δ before close.",
+                "false": "Expect continuation or chop without a clean bounce.",
+            },
+        ),
+        "vol_expanding": Choice(
+            instructions=(
+                "Volatility breakout rule (Polymarket 5m bots): V = sigma_short / sigma_long. "
+                "When V > 1 BTC is moving harder than its recent norm; the breakout direction "
+                "sets Up vs Down. If vol is collapsing back into range, do not add. "
+                "Given layer1 vol_proxy, delta_from_open, ofi, seconds_left: is vol expanding "
+                "with a directional breakout, collapsing, or flat?"
+            ),
+            criteria={
+                "EXPAND_UP": "Short vol > long norm and impulse is up.",
+                "EXPAND_DOWN": "Short vol > long norm and impulse is down.",
+                "COLLAPSE": "Vol back inside the normal range — no breakout trade.",
+                "FLAT": "No meaningful vol expansion.",
+            },
+        ),
+        "depth_lean_revert": Choice(
+            instructions=(
+                "Polymarket 5m depth study: when book depth leans hard (about 65/35) "
+                "while price is still flat, odds revert within a minute in ~73% of cases "
+                "(depth leads price by ~11s). Given `kalshi` quotes, `delta_from_open`, "
+                "ofi, and `seconds_left`, is this a depth-lean fade (expect revert), "
+                "a continuation, or too thin to call? Answer for the REST of this 15m window."
+            ),
+            criteria={
+                "FADE": "Depth one-sided but price flat — expect revert against the lean.",
+                "CONTINUE": "Price and depth agree — continuation more likely than fade.",
+                "FLAT": "Book too thin / mixed; no depth edge.",
+            },
+        ),
+        "multi_confirm": Noul(
+            instructions=(
+                "Quant vault 15m pattern rule: is this move confirmed by more than "
+                "one signal (engulfing + break of prior extreme, RSI/MACD agree, "
+                "or strong volume) rather than one lonely candle? True = multi-confirm."
+            ),
+            criteria={
+                "true": "Two or more independent confirms (pattern, level break, momentum, volume).",
+                "false": "Single-candle noise or conflicting confirms.",
+            },
+        ),
+        "fill_beats_fee": Noul(
+            instructions=(
+                "Is a market fill at the current ask still worth it after the taker "
+                "fee? If the book is too thin or the fee eats the edge, say false so "
+                "we skip instead of tipping."
+            ),
+            criteria={
+                "true": "Fill at ask still clears fee with a real edge.",
+                "false": "Fee, slippage, or thin book kills the edge — skip.",
+            },
+        ),
+        "settle_path": Choice(
+            instructions=(
+                "Path forecast for THIS window's settlement — stronger than a lean. "
+                "If `delta_from_open` is already large, say whether the remaining minutes "
+                "are more likely to HOLD that side or GIVE IT BACK before close."
+            ),
+            criteria={
+                "HOLD": "Current side of Δ keeps settlement (pump holds YES / dump holds NO).",
+                "GIVE_BACK": "Price gives back the Δ and settles the other side.",
+                "EVEN": "Settlement near the open; coin-flip finish.",
             },
         ),
         # Signal quality / adverse selection
@@ -332,6 +464,15 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
     escalate_p = _noul_payload(answers.get("should_escalate"), 0.2)
     squeeze_p = _noul_payload(answers.get("is_short_squeeze_risk"), 0.15)
     toxic_p = _noul_payload(answers.get("toxic_flow"), float(features.get("vpin_proxy") or 0.0))
+    next_move_ans = _choice_payload(answers.get("next_big_move"))
+    bounce_p = _noul_payload(answers.get("will_bounce"), 0.5)
+    path_ans = _choice_payload(answers.get("settle_path"))
+    next_move = str(next_move_ans.get("choice") or "QUIET").upper()
+    if next_move not in {"UP", "DOWN", "QUIET"}:
+        next_move = "QUIET"
+    path_mode = str(path_ans.get("choice") or "EVEN").upper()
+    if path_mode not in {"HOLD", "GIVE_BACK", "EVEN"}:
+        path_mode = "EVEN"
     quality_f, quality_label = _score_payload(
         answers.get("signal_quality"),
         ["Toxic / adverse — do not trade", "Weak / noisy setup", "Acceptable setup", "Clean high-quality setup"],
@@ -435,6 +576,32 @@ def call_jev_battery(features: dict[str, Any], social_sample: list[Any] | None =
         "sentiment_label": sent_label,
         "sentiment_score": sent_f,
         "squeeze_risk_pct": round(squeeze_p * 100.0, 1),
+        "fill_beats_fee_p": round(_noul_payload(answers.get("fill_beats_fee"), 0.5), 3),
+        "multi_confirm_p": round(_noul_payload(answers.get("multi_confirm"), 0.5), 3),
+        "vol_expanding": {
+            "choice": str((_choice_payload(answers.get("vol_expanding")).get("choice") or "FLAT")).upper(),
+            "conf": round(float(_choice_payload(answers.get("vol_expanding")).get("confidence") or 0.0), 3),
+        },
+        "depth_lean_revert": {
+            "choice": str(( _choice_payload(answers.get("depth_lean_revert")).get("choice") or "FLAT")).upper(),
+            "conf": round(float(_choice_payload(answers.get("depth_lean_revert")).get("confidence") or 0.0), 3),
+        },
+        "jev_forecast": {
+            "next_big_move": next_move,
+            "next_move_conf": round(float(next_move_ans.get("confidence") or 0.0), 3),
+            "will_bounce_p": round(bounce_p, 3),
+            "settle_path": path_mode,
+            "path_conf": round(float(path_ans.get("confidence") or 0.0), 3),
+            "p_next_up": round(
+                float(next_move_ans.get("probabilities", {}).get("UP", 0.0) or 0.0), 3
+            ),
+            "p_next_down": round(
+                float(next_move_ans.get("probabilities", {}).get("DOWN", 0.0) or 0.0), 3
+            ),
+            "p_next_quiet": round(
+                float(next_move_ans.get("probabilities", {}).get("QUIET", 0.0) or 0.0), 3
+            ),
+        },
         "toxic_flow": round(toxic_p, 3),
         "blueprint": "RohOnChain/2101311813908652069",
         "polarity_score": float(features.get("polarity_score") or 0.0),

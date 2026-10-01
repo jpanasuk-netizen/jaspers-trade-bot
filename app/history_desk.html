@@ -64,6 +64,7 @@ tr.glow-win td:first-child,tr.glow-loss td:first-child{box-shadow:inset 4px 0 12
     <span class="chip" id="port">:3002</span>
     <span class="chip" id="armed">—</span>
     <a class="chip" href="http://127.0.0.1:3000/" target="_blank">live desk :3000</a>
+    <span class="chip" id="ethChip">ETH —</span>
     <span class="chip" id="range">—</span>
   </div>
   <div class="kpis" id="kpis"></div>
@@ -78,7 +79,15 @@ tr.glow-win td:first-child,tr.glow-loss td:first-child{box-shadow:inset 4px 0 12
     </div>
   </div>
   <div class="card" style="margin-bottom:10px">
-    <h2>Live fills only</h2>
+    <h2>ETH · KXETH15M</h2>
+    <div class="filters">
+      <span class="chip" id="ethCount">0 windows</span>
+      <span class="chip" id="ethFills">0 fills</span>
+    </div>
+    <div class="tablewrap" id="ethTable"><div class="empty">loading ETH…</div></div>
+  </div>
+  <div class="card" style="margin-bottom:10px">
+    <h2>Bitcoin live fills</h2>
     <div class="filters">
       <select id="fResult"><option value="">all results</option></select>
       <select id="fSide">
@@ -198,8 +207,44 @@ async function ledger(){
     +"</tr></thead><tbody>"+tr+"</tbody></table>";
 }
 
+async function ethLedger(){
+  const r = await fetch("/api/eth?limit=200&ts="+Date.now(), {cache:"no-store"});
+  const d = await r.json();
+  const rows = (d.rows || []).filter(x => x.filled);
+  $("ethChip").textContent = "ETH " + (d.series || "KXETH15M");
+  $("ethCount").textContent = rows.length + " positions";
+  $("ethFills").textContent = rows.length + " fills";
+  if(!rows.length){
+    $("ethTable").innerHTML = '<div class="empty">no ETH positions yet</div>';
+    return;
+  }
+  const tr = rows.map(x => {
+    const w = x.won;
+    const glow = w===true?"glow-win":(w===false?"glow-loss":"");
+    const orb = w===true?"win":(w===false?"loss":"wait");
+    const lab = w===true?"WON":(w===false?"LOST":"wait");
+    return "<tr class='"+glow+"'>"
+      +"<td><span class='orb "+orb+"' title='"+lab+"'></span></td>"
+      +"<td>"+fmtTs(x.ts)+"</td>"
+      +"<td>"+(x.window_open?String(x.window_open).slice(11,16)+"Z":"—")+"</td>"
+      +"<td>"+(x.action||"—")+"</td>"
+      +"<td>"+(x.rule||"—")+"</td>"
+      +"<td class='"+(x.side||"")+"'>"+(x.side||"—")+"</td>"
+      +"<td>"+(x.run!=null?x.run:"—")+"</td>"
+      +"<td>"+(x.ticker||"—")+"</td>"
+      +"<td>"+money(x.budget)+"</td>"
+      +"<td>"+(x.filled?"filled":"—")+"</td>"
+      +"<td class='reason'>"+(x.reason||"")+"</td>"
+      +"</tr>";
+  }).join("");
+  $("ethTable").innerHTML = "<table><thead><tr>"
+    +"<th></th><th>time</th><th>window</th><th>action</th><th>rule</th><th>side</th>"
+    +"<th>streak</th><th>ticker</th><th>size</th><th>fill</th><th>reason</th>"
+    +"</tr></thead><tbody>"+tr+"</tbody></table>";
+}
+
 async function tick(){
-  try { await summary(); await ledger(); }
+  try { await summary(); await ethLedger(); await ledger(); }
   catch(e){ $("table").innerHTML = '<div class="empty">'+e+'</div>'; }
 }
 ["fResult","fSide","fMode"].forEach(id => $(id).addEventListener("change", ledger));

@@ -54,13 +54,26 @@ def _kurtosis(xs: list[float]) -> float:
 
 
 def period_sharpe(returns: list[float]) -> float | None:
-    """Per-period Sharpe (mean/std). Needs min sample — luck is not edge."""
+    """Per-period Sharpe (mean/std). Not a health light on 15m binaries."""
     if len(returns) < MIN_SAMPLE_FOR_EDGE:
         return None
     sd = _std(returns)
     if sd <= 1e-12:
         return None
     return _mean(returns) / sd
+
+
+def max_drawdown_pct(returns: list[float]) -> float | None:
+    if not returns:
+        return None
+    eq = 0.0
+    peak = 0.0
+    worst = 0.0
+    for r in returns:
+        eq += float(r)
+        peak = max(peak, eq)
+        worst = min(worst, eq - peak)
+    return round(worst, 4)
 
 
 def hit_rate_se(hits: int, n: int) -> float:
@@ -223,6 +236,26 @@ def load_ledger_returns(path: Path, limit: int = 200) -> list[float]:
     return rets
 
 
+def load_ledger_entries(path: Path, limit: int = 200) -> list[float]:
+    if not path.is_file():
+        return []
+    out: list[float] = []
+    for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
+        try:
+            rec = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        if not rec.get("filled") and str(rec.get("result") or "") != "LIVE_FILLED":
+            continue
+        try:
+            entry = float(rec.get("entry") or rec.get("est_entry") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 0.01 <= entry <= 0.99:
+            out.append(entry)
+    return out
+
+
 def load_judgment_pairs(path: Path, limit: int = 300) -> list[tuple[float, int]]:
     """(predicted p_side, outcome 1/0) for calibration."""
     if not path.is_file():
@@ -329,6 +362,9 @@ def desk_quant_snapshot() -> dict[str, Any]:
     if rets and len(rets) < MIN_SAMPLE_FOR_EDGE:
         tails["excess_kurtosis"] = round(_kurtosis(rets), 3) if len(rets) >= 4 else 0.0
     ps = period_sharpe(rets)
+    entries = load_ledger_entries(paths / "spin_ledger.jsonl")
+    br = cal.get("brier") if isinstance(cal, dict) else None
+    hit = round(hits / n, 3) if n else None
     # always expose a live activity number even when "too thin" for edge claims
     mean_edge = None
     try:
@@ -344,18 +380,25 @@ def desk_quant_snapshot() -> dict[str, Any]:
         "sample_n_judgments": n,
         "sample_n_live": n_live,
         "sample_n_ledger": n_ledger,
-        "hit_rate": round(hits / n, 3) if n else None,
+        "hit_rate": hit,
         "hit_rate_se": round(hit_rate_se(hits, n), 4) if n else None,
         "hit_rate_luck_band": round(2 * hit_rate_se(hits, n), 4) if n else None,
+        "pnl_usd": round(sum(rets), 4) if rets else None,
+        "max_drawdown": max_drawdown_pct(rets),
+        "avg_entry": round(_mean(entries), 4) if entries else None,
         "period_sharpe": round(ps, 3) if ps is not None else None,
         "period_sharpe_note": (
-            f"n={len(rets)}/{MIN_SAMPLE_FOR_EDGE} — wait for sample" if ps is None and rets else None
+            "Sharpe is not the health light on 15m binaries"
+            if ps is not None
+            else (f"n={len(rets)}/{MIN_SAMPLE_FOR_EDGE} — wait for sample" if rets else None)
         ),
         "mean_pnl": round(_mean(rets), 4) if rets else None,
         "std_pnl": round(_std(rets), 4) if rets else None,
         "mean_fair_edge": mean_edge,
         "min_sample": MIN_SAMPLE_FOR_EDGE,
-        "edge_statistically_visible": bool(n >= MIN_SAMPLE_FOR_EDGE and ps is not None and ps > 0),
+        "edge_statistically_visible": bool(
+            n >= MIN_SAMPLE_FOR_EDGE and hit is not None and hit > 0.55 and br is not None and br <= BRIER_PASS
+        ),
         "calibration": cal,
         "tails": tails,
         "source": "live_fair_vs_open + ledger",
@@ -366,7 +409,8 @@ def desk_quant_snapshot() -> dict[str, Any]:
         },
         "principles": [
             "randomness has a shape — measure it",
-            "skill vs noise needs sample size + Sharpe",
+            "health light is hit rate, Brier, dollar PnL, drawdown, average entry",
+            "Sharpe on 15m binaries is a story, not a go signal",
             "confidence must be calibrated to act",
             "patterns are fake until OOS + costs say otherwise",
             "tails do the damage — watch VaR/kurtosis",

@@ -59,6 +59,14 @@ def fetch_btc_spot() -> dict[str, Any]:
         return {"ok": False, "error": str(exc)[:200], "price": None, "source": "coinbase_rest"}
 
 
+def _px_ok(v: Any) -> float | None:
+    """Kalshi ticks are 1 cent. 0.001 / 0.999 prints are junk, not a book."""
+    x = _f(v)
+    if x is None or x < 0.01 or x > 0.99:
+        return None
+    return x
+
+
 def _side_prices(m: dict[str, Any]) -> tuple[float | None, float | None, float | None, float | None]:
     yb = _f(m.get("yes_bid_dollars"))
     ya = _f(m.get("yes_ask_dollars"))
@@ -72,7 +80,8 @@ def _side_prices(m: dict[str, Any]) -> tuple[float | None, float | None, float |
         nb = _cents_or_dollars(m.get("no_bid"))
     if na is None:
         na = _cents_or_dollars(m.get("no_ask"))
-    return yb, ya, nb, na
+    # Drop junk prints so a fake 0.999 bid cannot look like market certainty.
+    return _px_ok(yb), _px_ok(ya), _px_ok(nb), _px_ok(na)
 
 
 def _et_zone():
@@ -172,11 +181,23 @@ def _normalize_market(m: dict[str, Any], series: str) -> dict[str, Any]:
     yb, ya, nb, na = _side_prices(m)
     mid_yes = None
     if yb is not None and ya is not None:
-        mid_yes = (yb + ya) / 2.0
+        if yb <= ya:
+            mid_yes = (yb + ya) / 2.0
+        else:
+            # Crossed book after junk removal — refuse the mid.
+            mid_yes = None
     elif ya is not None:
         mid_yes = ya
     elif yb is not None:
         mid_yes = yb
+    # A live two-sided print is trustworthy. One-sided or empty is not.
+    book_ok = (
+        yb is not None
+        and ya is not None
+        and yb <= ya
+        and (yb + 1e-9 >= 0.01)
+        and (ya - 1e-9 <= 0.99)
+    )
 
     status = (m.get("status") or "").lower()
     if status in {"closed", "determined", "settled", "finalized"}:
@@ -224,6 +245,7 @@ def _normalize_market(m: dict[str, Any], series: str) -> dict[str, Any]:
         "no_bid": nb,
         "no_ask": na,
         "yes_mid": mid_yes,
+        "book_ok": book_ok,
         "volume": _f(volume),
         "strike": strike,
         "open_of_window": open_px,
@@ -235,6 +257,12 @@ def _normalize_market(m: dict[str, Any], series: str) -> dict[str, Any]:
         "result": m.get("result") or "",
         "raw_status": m.get("status"),
     }
+    raw_ex = m.get("exchange_index")
+    if raw_ex is not None:
+        try:
+            out["exchange_index"] = int(raw_ex)
+        except (TypeError, ValueError):
+            pass
     return refresh_seconds_left(out)
 
 

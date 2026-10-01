@@ -32,6 +32,8 @@ body{overflow:auto !important;height:auto !important;min-height:100vh}
 .tab-btn{font-family:var(--mono);font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--panel);color:var(--ink2);border-radius:10px;padding:7px 12px;cursor:pointer}
 .tab-btn:hover{border-color:var(--muted2)}
 .tab-btn.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+body.compact .lab-only{display:none !important}
+body.compact .main{grid-template-columns:1fr 300px}
 .main{display:grid;grid-template-columns:1fr 340px;gap:10px;padding:10px 14px 24px;align-items:start}
 .left,.right{display:flex;flex-direction:column;gap:10px;min-width:0}
 .block{border:1px solid var(--border);border-radius:14px;background:var(--bg);overflow:hidden}
@@ -51,7 +53,9 @@ canvas.chart.tall{height:140px}
 .row .label{font-family:var(--mono);font-size:11px;font-weight:600}
 .row .track,.bar{height:8px;background:var(--track);border-radius:99px;overflow:hidden}
 .row .fill,.bar>i{display:block;height:100%;width:0;border-radius:99px;transition:width .2s}
-.tape{font-family:var(--mono);font-size:11px;max-height:280px;overflow:auto}
+.logs{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.logs>.block{min-width:0}
+.tape{font-family:var(--mono);font-size:11px;height:320px;max-height:320px;overflow-x:auto;overflow-y:scroll}
 .tape-row{display:grid;grid-template-columns:22px 64px 44px 1fr 70px;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border);border-radius:8px;align-items:center}
 .orb{width:14px;height:14px;border-radius:50%;display:inline-block}
 .orb.win{background:#16a34a;box-shadow:0 0 8px 3px rgba(34,197,94,.9),0 0 18px 6px rgba(34,197,94,.35)}
@@ -87,7 +91,7 @@ canvas.chart.tall{height:140px}
 .gate-item .ghint{grid-column:2/4;font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:-2px}
 .verdict{font-family:var(--mono);font-weight:800;font-size:15px;letter-spacing:.03em;margin-bottom:8px}
 .verdict.red{color:var(--no-ink)} .verdict.yellow{color:var(--mid-ink)} .verdict.green{color:var(--yes-ink)}
-@media(max-width:980px){.main{grid-template-columns:1fr}}
+@media(max-width:980px){.main,.logs{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -96,7 +100,8 @@ canvas.chart.tall{height:140px}
     <span class="brand">‖ Jasper's Trade Bot</span>
     <span class="badge" id="modeBadge">PAPER</span>
     <span class="badge" id="judgeBadge">judge</span>
-    <span class="chip" id="ticker">KXBTC15M</span>
+    <span class="chip" id="ticker">BTC KXBTC15M</span>
+    <span class="chip" id="ethChip">ETH …</span>
     <span class="chip" id="windowId">window —</span>
     <span class="chip" id="wlp">0/0/0</span>
     <span class="spacer"></span>
@@ -104,6 +109,7 @@ canvas.chart.tall{height:140px}
     <span class="chip" id="uptime">00:00:00</span>
     <span class="chip" id="liveTick">tick —</span>
     <a class="chip" href="/history" style="color:inherit;text-decoration:none">history</a>
+    <button type="button" class="chip" id="btnCompact" style="cursor:pointer">compact</button>
   </header>
   <div class="stats">
     <span>spot <strong id="spot">—</strong></span>
@@ -119,6 +125,21 @@ canvas.chart.tall{height:140px}
     <span>pnl <strong id="pnl">$0.00</strong></span>
     <span>pts <strong id="pts">0</strong></span>
     <span>target <strong id="target">$6 double</strong></span>
+    <span>cap <strong id="entryCap">—</strong></span>
+    <span>pricey skip <strong id="skipPricey">—</strong></span>
+    <span>spike <strong id="spikeFlag">off</strong></span>
+  </div>
+  <div class="stats" id="ethStrip">
+    <span>ETH <strong id="ethSeries">KXETH15M</strong></span>
+    <span>action <strong id="ethAction">—</strong></span>
+    <span>rule <strong id="ethRule">—</strong></span>
+    <span>side <strong id="ethSide">—</strong></span>
+    <span>streak <strong id="ethRun">—</strong></span>
+    <span>window <strong id="ethWindow">—</strong></span>
+    <span>cash <strong id="ethCash">—</strong></span>
+    <span>size <strong id="ethBudget">—</strong></span>
+    <span class="spacer"></span>
+    <span id="ethReason">—</span>
   </div>
 
   <nav class="tabs" id="deskTabs">
@@ -135,6 +156,35 @@ canvas.chart.tall{height:140px}
 
   <div class="main">
     <section class="left">
+      <div class="logs" id="sec-logs">
+        <div class="block">
+          <div class="block-head">ETH · KXETH15M</div>
+          <div class="block-body tape" id="ethLog">…</div>
+        </div>
+        <div class="block">
+          <div class="block-head">BTC · KXBTC15M</div>
+          <div class="block-body tape" id="tape">…</div>
+        </div>
+      </div>
+
+      <div class="block" id="sec-eth-charts">
+        <div class="block-head">ETH spot · ETHUSDT</div>
+        <div class="block-body">
+          <canvas id="ethSpark" class="chart tall" width="820" height="140"></canvas>
+          <div class="g2" style="margin-top:8px">
+            <div>
+              <div class="call-meta">15m closes</div>
+              <canvas id="eth15Spark" class="chart" width="390" height="100"></canvas>
+            </div>
+            <div>
+              <div class="call-meta">15m close − open</div>
+              <canvas id="ethDeltaSpark" class="chart" width="390" height="100"></canvas>
+            </div>
+          </div>
+          <div class="call-meta" id="ethChartMeta" style="margin-top:6px">—</div>
+        </div>
+      </div>
+
       <!-- CHARTS -->
       <div class="block" id="sec-charts">
         <div class="block-head">BTC spot · fair vs book · LIVE</div>
@@ -192,7 +242,7 @@ canvas.chart.tall{height:140px}
       </div>
 
       <!-- PIPELINE -->
-      <div class="block" id="sec-pipeline">
+      <div class="block lab-only" id="sec-pipeline">
         <div class="block-head">JEV pipeline · Layer 1 features</div>
         <div class="block-body">
           <div class="pipe" id="pipe">
@@ -216,7 +266,7 @@ canvas.chart.tall{height:140px}
       </div>
 
       <!-- BTCC -->
-      <div class="block" id="sec-btcc">
+      <div class="block lab-only" id="sec-btcc">
         <div class="block-head">BTCC signal board · live</div>
         <div class="block-body">
           <div class="g2">
@@ -242,7 +292,7 @@ canvas.chart.tall{height:140px}
       </div>
 
       <!-- QUANT / QD -->
-      <div class="g2" id="sec-quant">
+      <div class="g2 lab-only" id="sec-quant">
         <div class="block">
           <div class="block-head">QuantDinger · Bitcoin</div>
           <div class="block-body">
@@ -263,9 +313,12 @@ canvas.chart.tall{height:140px}
           <div class="block-head">Quant lab · skill vs noise</div>
           <div class="block-body">
             <div class="g3">
-              <div class="gauge"><div class="gl">n</div><div class="gv" id="qN">—</div></div>
               <div class="gauge"><div class="gl">hit</div><div class="gv" id="qHit">—</div></div>
               <div class="gauge"><div class="gl">brier</div><div class="gv" id="qBrier">—</div></div>
+              <div class="gauge"><div class="gl">pnl $</div><div class="gv" id="qPnl">—</div></div>
+              <div class="gauge"><div class="gl">max dd</div><div class="gv" id="qDd">—</div></div>
+              <div class="gauge"><div class="gl">avg entry</div><div class="gv" id="qAvg">—</div></div>
+              <div class="gauge"><div class="gl">n</div><div class="gv" id="qN">—</div></div>
               <div class="gauge"><div class="gl">sharpe</div><div class="gv" id="qSharpe">—</div></div>
               <div class="gauge"><div class="gl">kurt</div><div class="gv" id="qKurt">—</div></div>
               <div class="gauge"><div class="gl">edge μ</div><div class="gv" id="qEdge">—</div></div>
@@ -278,7 +331,7 @@ canvas.chart.tall{height:140px}
       </div>
 
       <!-- MODEL BARS -->
-      <div class="block">
+      <div class="block lab-only">
         <div class="block-head">Decision model bars</div>
         <div class="block-body">
           <div id="modelBars">—</div>
@@ -292,14 +345,9 @@ canvas.chart.tall{height:140px}
         <div class="block-body" id="metricRows"></div>
       </div>
 
-      <!-- TAPE / RISK -->
-      <div class="g2" id="sec-tape">
-        <div class="block">
-          <div class="block-head">Tape</div>
-          <div class="block-body tape" id="tape">…</div>
-        </div>
-        <div class="block">
-          <div class="block-head">Risk checklist + micro</div>
+      <!-- RISK -->
+      <div class="block" id="sec-tape">
+        <div class="block-head">Risk checklist + micro</div>
           <div class="block-body">
             <div id="riskList" class="call-meta">—</div>
             <dl class="kv" style="margin-top:8px">
@@ -311,7 +359,6 @@ canvas.chart.tall{height:140px}
               <dt>Polarity</dt><dd id="sentPolarity">—</dd>
             </dl>
           </div>
-        </div>
       </div>
     </section>
 
@@ -353,9 +400,12 @@ const HIST = {spot:[],fair:[],book:[],edge:[],bconf:[],jconf:[],lat:[],hit:[],de
 const HMAX = 80;
 function push(k,v){ if(v==null||Number.isNaN(+v))return; (HIST[k]=HIST[k]||[]).push(+v); if(HIST[k].length>HMAX)HIST[k].shift(); }
 function spark(id,key,color,marker,markerLabel){
+  sparkSeries(id, HIST[key]||[], color, marker, markerLabel);
+}
+function sparkSeries(id, series, color, marker, markerLabel){
   const c=$(id); if(!c)return; const ctx=c.getContext("2d"),W=c.width,H=c.height;
   ctx.clearRect(0,0,W,H); ctx.fillStyle="#F1F0EC"; ctx.fillRect(0,0,W,H);
-  const a=HIST[key]||[];
+  const a=series||[];
   const mark=(marker!=null&&!Number.isNaN(+marker))?+marker:null;
   if(a.length<2 && mark==null){ctx.fillStyle="#98968E";ctx.font="10px monospace";ctx.fillText("collecting…",10,H/2);return;}
   const scale=a.slice();
@@ -542,7 +592,7 @@ function render(s){
   $("left").textContent=fmtSec(win.seconds_left);
   $("statFair").textContent=fair!=null?(+fair).toFixed(3):"—";
   $("statEdge").textContent=edge!=null?(+edge).toFixed(3):"—";
-  $("ticker").textContent=win.ticker||meta.market||"KXBTC15M";
+  $("ticker").textContent="BTC "+(win.ticker||meta.market||"KXBTC15M");
   $("windowId").textContent=win.window_id?("window "+win.window_id):(mf.ticker||"—");
   $("wlp").textContent=(tot.wins||0)+"/"+(tot.losses||0)+"/"+(tot.pushes||0);
   $("modeBadge").textContent=meta.liveTrading?"LIVE":"PAPER";
@@ -556,6 +606,12 @@ function render(s){
   $("pnl").style.color=pnl>=0?"var(--yes-ink)":"var(--no-ink)";
   $("pts").textContent=(s.charts&&s.charts.spot&&s.charts.spot.length)||0;
   $("target").textContent="$"+(+(b.recover_target_usd||meta.martingaleTarget||6)).toFixed(0);
+  const gatesMeta=s.gates||latest.gates||{};
+  const ceil=gatesMeta.entry_ceil!=null?+gatesMeta.entry_ceil:0.65;
+  $("entryCap").textContent="≤"+ceil.toFixed(2);
+  const skipP=s.last_skip_pricey||{};
+  $("skipPricey").textContent=skipP.would_have?(skipP.would_have+" @"+(+skipP.est_entry||0).toFixed(2)):"—";
+  $("spikeFlag").textContent=gatesMeta.spike_enabled?"on":"off";
 
   const qdLean=qdD.lean, btccLean=b.lean;
   let side=dec.side||"";
@@ -650,7 +706,10 @@ function render(s){
   $("qN").textContent=q.sample_n_judgments!=null?q.sample_n_judgments:"—";
   $("qHit").textContent=q.hit_rate!=null?((+q.hit_rate)*100).toFixed(1)+"%":"—";
   $("qBrier").textContent=q.calibration&&q.calibration.brier!=null?(+q.calibration.brier).toFixed(3):"—";
-  $("qSharpe").textContent=q.period_sharpe!=null?(+q.period_sharpe).toFixed(2):(q.mean_fair_edge!=null?("e "+(+q.mean_fair_edge).toFixed(3)):"thin");
+  $("qPnl").textContent=q.pnl_usd!=null?((+q.pnl_usd>=0?"+$":"$")+Math.abs(+q.pnl_usd).toFixed(2)):"—";
+  $("qDd").textContent=q.max_drawdown!=null?(+q.max_drawdown).toFixed(2):"—";
+  $("qAvg").textContent=q.avg_entry!=null?(+q.avg_entry).toFixed(2):"—";
+  $("qSharpe").textContent=q.period_sharpe!=null?(+q.period_sharpe).toFixed(2)+" (not health)":"thin";
   $("qKurt").textContent=q.tails&&q.tails.excess_kurtosis!=null?(+q.tails.excess_kurtosis).toFixed(2):"—";
   $("qEdge").textContent=q.mean_fair_edge!=null?(+q.mean_fair_edge).toFixed(3):"—";
   $("qKelly").textContent=(q.kelly_policy&&q.kelly_policy.allowed?"Kelly allowed":"Kelly locked")+" · mode "+(q.kelly_policy&&q.kelly_policy.allowed?"fractional":"fixed");
@@ -660,7 +719,7 @@ function render(s){
   renderModelBars(dec,qdP,b,{fair:fair,book:book,composite:fair!=null&&book!=null?0.65*(+fair)+0.35*(+book):null});
   $("modelSources").textContent=[dec.judge_src,btccLean?("BTCC "+btccLean):null,qdLean?("QD "+qdLean):null,riskBlocked?"RISK BLOCK":null].filter(Boolean).join(" + ")||"—";
 
-  renderTape(s.events,s.last_spin);
+  /* Bitcoin log is painted by loadBtc from /api/btc so a desk reload does not blank it. */
 
   // TRADE GATES
   const fairDist=fair==null?null:Math.min(1,Math.abs(+fair-0.5)*2);
@@ -689,7 +748,7 @@ function render(s){
     gateItem("Hygiene",hy.override?"OFF (nix)":hy.veto?"VETO":"clear",hy.override?"override — take risk":"doctrine",hyScore),
     gateItem("Risk gate",riskBlocked?"BLOCK":(rk.verdict||"ALLOW"),riskBlocked?((rk.reasons||[]).join(", ").slice(0,70)||"any fail = no trade"):"hard checks passed",riskScore),
     gateItem("Calibration",brier!=null?("brier "+(+brier).toFixed(3)):("n="+(q.sample_n_judgments||0)),"≤0.25 calibrated",calScore),
-    gateItem("Entry cost","Y"+(win.yes_ask!=null?(+win.yes_ask).toFixed(2):"—")+" N"+(win.no_ask!=null?(+win.no_ask).toFixed(2):"—"),"cheaper ticket preferred",cheap>0?Math.max(0.15,Math.min(1,cheap)):0.2),
+    gateItem("Entry cost","Y"+(win.yes_ask!=null?(+win.yes_ask).toFixed(2):"—")+" N"+(win.no_ask!=null?(+win.no_ask).toFixed(2):"—"),"must be ≤ "+ceil.toFixed(2)+" or SKIP_PRICEY",cheap>0?Math.max(0.15,Math.min(1,cheap)):0.2),
     gateItem("Window secs",fmtSec(secs),secScore>=0.6?"fresh enough":"stale / closing",secScore),
   ];
   const scores=[fairDist,edgeScore,btccScore,qdScore,confScore,hScore,latScore,hyScore,riskScore,calScore,secScore].filter(function(x){return x!=null;});
@@ -802,12 +861,125 @@ $("btnSpin").onclick=async function(){
   try{ await post("/api/spin",{force:true}); await load(); }
   finally{ $("btnSpin").disabled=false; }
 };
+(function(){
+  const on=localStorage.getItem("deskCompact")==="1";
+  document.body.classList.toggle("compact", on);
+  const btn=$("btnCompact");
+  if(btn){
+    btn.textContent=on?"full lab":"compact";
+    btn.onclick=function(){
+      const next=!document.body.classList.contains("compact");
+      document.body.classList.toggle("compact", next);
+      localStorage.setItem("deskCompact", next?"1":"0");
+      btn.textContent=next?"full lab":"compact";
+    };
+  }
+})();
 async function post(url,body){
   const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
   return r.json();
 }
+async function loadEth(){
+  try{
+    const r=await fetch("/api/eth?ts="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    const sig=d.signal||{};
+    const action=d.action||(d.ok===false?"down":"—");
+    $("ethSeries").textContent=d.series||"KXETH15M";
+    $("ethAction").textContent=action;
+    $("ethRule").textContent=sig.rule||"—";
+    $("ethSide").textContent=sig.side||"—";
+    $("ethSide").style.color=sig.side==="YES"?"var(--yes-ink)":sig.side==="NO"?"var(--no-ink)":"";
+    $("ethRun").textContent=sig.run!=null?String(sig.run):"—";
+    $("ethWindow").textContent=d.window_open?String(d.window_open).slice(11,16)+"Z":"—";
+    $("ethCash").textContent=d.cash!=null?"$"+Number(d.cash).toFixed(2):"—";
+    $("ethBudget").textContent=d.budget!=null?"$"+Number(d.budget).toFixed(2):"—";
+    $("ethReason").textContent=d.reason||"";
+    $("ethChip").textContent="ETH "+action;
+    renderEthLog(d);
+  }catch(e){
+    $("ethChip").textContent="ETH down";
+    $("ethAction").textContent="down";
+    $("ethReason").textContent="desk unreachable";
+    $("ethLog").innerHTML='<div style="color:var(--muted);padding:8px">desk unreachable</div>';
+  }
+}
+function ethEntered(r){
+  return !!(r && r.filled);
+}
+function renderEthLog(d){
+  const rows=(d.rows||[]).filter(ethEntered);
+  if(!rows.length){
+    $("ethLog").innerHTML='<div style="color:var(--muted);padding:8px">no ETH positions yet</div>';
+    return;
+  }
+  $("ethLog").innerHTML=rows.map(function(r){
+    const side=r.side||"—";
+    const tag=(side==="YES"||side==="NO")?side:"—";
+    const when=(r.ts||"").slice(11,19)||(r.window_open?String(r.window_open).slice(11,16)+"Z":"—");
+    return '<div class="tape-row"><span class="orb wait"></span><span>'+when+'</span><span class="tag '+tag+'">'+tag+'</span><span>'+(r.action||"—")+' · '+(r.rule||"—")+' · '+(r.run!=null?("streak "+r.run):"—")+' · '+(r.reason||"")+'</span><span>'+(r.filled?"fill":"—")+'</span></div>';
+  }).join("");
+}
+async function loadBtc(){
+  try{
+    const r=await fetch("/api/btc?ts="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    const rows=d.rows||[];
+    if(!rows.length){
+      $("tape").innerHTML='<div style="color:var(--muted);padding:8px">no Bitcoin rows yet</div>';
+      return;
+    }
+    $("tape").innerHTML=rows.map(function(row){
+      const side=row.side||"—";
+      const tag=(side==="YES"||side==="NO")?side:"—";
+      const w=row.won;
+      const glow=w===true?"glow-win":(w===false?"glow-loss":"");
+      const orb=w===true?"win":(w===false?"loss":"wait");
+      const when=(row.ts||"").slice(11,19)||"—";
+      return '<div class="tape-row '+glow+'"><span class="orb '+orb+'"></span><span>'+when+'</span><span class="tag '+tag+'">'+tag+'</span><span>'+(row.result||"—")+' · '+(row.reason||"")+'</span><span>'+String(row.ticker||"").slice(-8)+'</span></div>';
+    }).join("");
+  }catch(e){
+    $("tape").innerHTML='<div style="color:var(--muted);padding:8px">log unreachable</div>';
+  }
+}
+async function loadEthCharts(){
+  try{
+    const r=await fetch("/api/eth-chart?ts="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    if(!d.ok){
+      sparkSeries("ethSpark", [], "#627EEA", null);
+      sparkSeries("eth15Spark", [], "#8B7CFF", null);
+      sparkSeries("ethDeltaSpark", [], "#0FA968", 0, "FLAT");
+      $("ethChartMeta").textContent=d.reason||"ETH feed down";
+      return;
+    }
+    const m1=d.m1||[];
+    const last=m1.length?m1[m1.length-1]:null;
+    const open=d.open;
+    sparkSeries("ethSpark", m1, "#627EEA", open, "15m OPEN");
+    sparkSeries("eth15Spark", d.m15||[], "#8B7CFF", open, "15m OPEN");
+    sparkSeries("ethDeltaSpark", d.bodies||[], "#0FA968", 0, "FLAT");
+    const delta=(last!=null&&open)?((last-open)/open)*100:null;
+    $("ethChartMeta").textContent=[
+      "ETHUSDT",
+      last!=null?("last "+fmtPx(last)):null,
+      open!=null?("15m open "+fmtPx(open)):null,
+      delta!=null?("Δ "+(delta>=0?"+":"")+delta.toFixed(2)+"%"):null,
+      "1m "+m1.length,
+      "15m "+((d.m15||[]).length)
+    ].filter(Boolean).join("  ·  ");
+  }catch(e){
+    $("ethChartMeta").textContent="ETH chart unreachable";
+  }
+}
 load();
+loadEth();
+loadBtc();
+loadEthCharts();
 setInterval(load,2000);
+setInterval(loadEth,2000);
+setInterval(loadBtc,2000);
+setInterval(loadEthCharts,5000);
 setInterval(function(){ $("uptime").textContent=uptime(startedAt); },1000);
 </script>
 </body>

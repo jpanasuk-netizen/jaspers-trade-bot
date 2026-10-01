@@ -126,6 +126,58 @@ def sized_quote(
         count = round(count - 0.01, 2)
     return None
 
+
+def budget_quote(
+    side: str,
+    market: dict[str, Any],
+    budget_usd: float,
+    cash: float,
+    take_cents: float = 0.01,
+) -> dict[str, Any] | None:
+    """Largest clip of this side whose premium plus fee stays within the dollar budget.
+
+    Pays one cent through the quoted ask when that price is still at or under
+    the entry ceiling. An IOC parked exactly on a stale ask comes back unfilled.
+    """
+    q = contract_quote(side, market)
+    if not q:
+        return None
+    quoted = float(q["ask"])
+    pay = quoted
+    step = max(0.0, float(take_cents or 0))
+    if step and quoted + step <= float(config.entry_ceil) + 1e-9:
+        pay = round(quoted + step, 2)
+    try:
+        _budget = float(budget_usd)
+    except (TypeError, ValueError):
+        _budget = 0.0
+    cash_f = float(cash or 0)
+    cap = min(_budget, cash_f) if cash_f > 0 else _budget
+    if cap < 0.02 or pay < 0.01 or pay > 0.99:
+        return None
+    count = math.floor((cap / pay) * 100.0) / 100.0
+    while count >= 0.01 - 1e-12:
+        count = round(count, 2)
+        fee = taker_fee_usd(pay, count)
+        need = round(count * pay + fee, 4)
+        if need <= cap + 1e-9:
+            out = dict(q)
+            out["quoted_ask"] = round(quoted, 4)
+            out["ask"] = round(pay, 4)
+            out["count"] = count
+            out["fee"] = fee
+            out["need"] = need
+            out["unit"] = round(pay, 4)
+            if str(side).upper() == "YES":
+                out["px"] = round(pay, 4)
+                out["book_side"] = "bid"
+            else:
+                out["px"] = round(1.0 - pay, 4)
+                out["book_side"] = "ask"
+            return out
+        count = round(count - 0.01, 2)
+    return None
+
 ORDER_PATH = "/trade-api/v2/portfolio/events/orders"
 ALT_ORDER_PATHS = (
     "/trade-api/v2/portfolio/events/orders",
@@ -136,25 +188,40 @@ TRANSFER_PATH = "/trade-api/v2/portfolio/intra_exchange_instance_transfer"
 
 
 def ensure_shard_funds(key_id, pk, dest_shard: int, min_dollars: float = 0.15) -> dict[str, Any]:
-    """Move cash from shard 0 → dest_shard so KXBTC15M (crypto=shard 2) can trade."""
+    """Move cash from shard 0 → dest_shard so KXBTC15M (crypto=shard 2) can trade.
+
+    Kalshi's intra-exchange transfer is accepted immediately but the dest shard
+    balance updates a beat later — poll before returning dest_cash.
+    """
+    import time as _time
+
     if dest_shard is None or int(dest_shard) < 0:
         dest_shard = 2
     dest_shard = int(dest_shard)
-    _st, bal = _kreq(key_id, pk, "GET", "/trade-api/v2/portfolio/balance")
-    shards = {}
-    for row in bal.get("balance_breakdown") or []:
-        try:
-            shards[int(row.get("exchange_index", -1))] = float(row.get("balance") or 0)
-        except (TypeError, ValueError):
-            continue
+
+    def _shards() -> dict[int, float]:
+        _st, bal = _kreq(key_id, pk, "GET", "/trade-api/v2/portfolio/balance")
+        out: dict[int, float] = {}
+        for row in bal.get("balance_breakdown") or []:
+            try:
+                out[int(row.get("exchange_index", -1))] = float(row.get("balance") or 0)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    shards = _shards()
     have_dest = shards.get(dest_shard, 0.0)
     have_src = shards.get(0, 0.0)
     moved = 0.0
     if have_dest < min_dollars and have_src >= 0.01:
-        # recover pennies: dump leftover shard-0 dust onto the crypto shard
-        send = round(have_src if have_src < 0.05 else min(have_src - 0.01, max(0.0, min_dollars - have_dest + 0.05)), 4)
+        # Send enough for the clip plus a little fee dust.
+        need = max(0.0, min_dollars - have_dest + 0.05)
+        send = round(min(max(have_src - 0.01, 0.0), need), 4)
         if send >= 0.01:
-            amount_cc = int(round(send * 10000))  # centicents
+            # amount is in CENTICENTS ($1 = 10000) on this endpoint.
+            # (send * 100 only moved ~1% of the intended cash — that is why
+            # clips came out ~$1 instead of $4.20.)
+            amount_cc = int(round(send * 10000))
             body = {
                 "source": "event_contract",
                 "destination": "event_contract",
@@ -167,13 +234,13 @@ def ensure_shard_funds(key_id, pk, dest_shard: int, min_dollars: float = 0.15) -
                 moved = send
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "error": str(exc)[:200], "shards": shards, "dest_shard": dest_shard}
-    _st2, bal2 = _kreq(key_id, pk, "GET", "/trade-api/v2/portfolio/balance")
-    shards2 = {}
-    for row in bal2.get("balance_breakdown") or []:
-        try:
-            shards2[int(row.get("exchange_index", -1))] = float(row.get("balance") or 0)
-        except (TypeError, ValueError):
-            continue
+    # Poll — dest balance can lag the POST by a second or two.
+    shards2 = shards
+    for _ in range(8):
+        _time.sleep(0.4)
+        shards2 = _shards()
+        if shards2.get(dest_shard, 0.0) >= min_dollars:
+            break
     return {
         "ok": True,
         "moved_usd": moved,
@@ -257,6 +324,9 @@ def _kreq(key_id: str, pk: Any, method: str, path: str, body: dict | None = None
         raise RuntimeError(f"{method} {path} -> {exc.code} {err[:400]}") from exc
 
 
+_EX_CACHE: dict[str, int] = {}
+
+
 def _resolve_market_ex(key_id, pk, ticker: str, market: dict[str, Any] | None) -> int:
     """KXBTC15M binary markets live on exchange_index 2 (crypto events)."""
     for cand in ((market or {}).get("exchange_index"),):
@@ -265,11 +335,17 @@ def _resolve_market_ex(key_id, pk, ticker: str, market: dict[str, Any] | None) -
                 return int(cand)
         except (TypeError, ValueError):
             pass
+    cached = _EX_CACHE.get(str(ticker or ""))
+    if cached is not None:
+        return cached
     try:
         _st, data = _kreq(key_id, pk, "GET", f"/trade-api/v2/markets/{ticker}")
         ex = (data.get("market") or {}).get("exchange_index")
         if ex is not None:
-            return int(ex)
+            value = int(ex)
+            if ticker:
+                _EX_CACHE[str(ticker)] = value
+            return value
     except Exception:  # noqa: BLE001
         pass
     return 2
@@ -381,18 +457,55 @@ def _submit_kalshi_order(key_id, pk, body: dict[str, Any]) -> tuple[int | None, 
     return st, data, used
 
 
+def fetch_positions() -> dict[str, dict[str, Any]]:
+    """Live positions by ticker: count / market_value / realized_pnl.
+
+    Used to notice a customer sell in the Kalshi app (position vanishes or
+    shrinks without our bot placing an exit).
+    """
+    try:
+        key_id, pk = load_creds()
+        _st, data = _kreq(key_id, pk, "GET", "/trade-api/v2/portfolio/positions?limit=200")
+    except Exception as exc:  # noqa: BLE001
+        return {"_error": {"message": str(exc)[:160]}}
+    out: dict[str, dict[str, Any]] = {}
+    for p in data.get("market_positions") or data.get("positions") or []:
+        if not isinstance(p, dict):
+            continue
+        ticker = str(p.get("ticker") or p.get("market_ticker") or "")
+        if not ticker:
+            continue
+        try:
+            pos = float(p.get("position") or p.get("quantity") or 0)
+        except (TypeError, ValueError):
+            pos = 0.0
+        try:
+            rp = p.get("realized_pnl_dollars", p.get("realized_pnl"))
+            rp_f = float(rp) if rp is not None else None
+        except (TypeError, ValueError):
+            rp_f = None
+        try:
+            mv = p.get("market_value_dollars", p.get("market_value"))
+            mv_f = float(mv) if mv is not None else None
+        except (TypeError, ValueError):
+            mv_f = None
+        out[ticker] = {"count": pos, "realized_pnl": rp_f, "market_value": mv_f}
+    return out
+
+
 def place_order(
     ticker: str,
     side: str,
     market: dict[str, Any],
     stake_usd: float | None = None,
     count: float | None = None,
+    limit_px: float | None = None,
 ) -> dict[str, Any]:
     key_id, pk = load_creds()
     q = contract_quote(side, market)
     if not q:
         raise RuntimeError(f"no {side} ask on book")
-    px = q["px"]
+    px = float(limit_px) if limit_px is not None else q["px"]
     book_side = q["book_side"]
     unit = q["unit"]
     need = q["need"]
@@ -413,8 +526,12 @@ def place_order(
 
     if count is not None:
         count_f = max(0.01, round(float(count), 2))
-        fee = taker_fee_usd(q["ask"], count_f)
-        need = round(count_f * float(q["ask"]) + fee, 4)
+        if str(side).upper() == "YES":
+            pay = float(px)
+        else:
+            pay = round(1.0 - float(px), 4)
+        fee = taker_fee_usd(pay, count_f)
+        need = round(count_f * pay + fee, 4)
         q = dict(q)
         q["count"] = count_f
         q["fee"] = fee
@@ -443,12 +560,18 @@ def place_order(
 
     ex = market_ex
 
+    # AGGRESSIVE_TAKE: IOC at the ask misses when the book flickers.
+    # Pay a tick over the ask so the order actually crosses.
+    try:
+        px_take = min(0.99, round(float(px) + 0.01, 4))
+    except (TypeError, ValueError):
+        px_take = px
     body = {
         "ticker": ticker,
         "client_order_id": str(uuid.uuid4()),
         "side": book_side,
         "count": f"{float(count):.2f}",
-        "price": f"{px:.4f}",
+        "price": f"{px_take:.4f}",
         "time_in_force": "immediate_or_cancel",
         "self_trade_prevention_type": "taker_at_cross",
         "post_only": False,
@@ -544,6 +667,18 @@ def close_position(
     st, data, sent = _submit_kalshi_order(key_id, pk, body)
     order = _extract_order(data)
     fill_n = _fill_count(order)
+    # RETRY_FILL: one more IOC at +2 ticks if the first pass missed.
+    if fill_n <= 0:
+        try:
+            px2 = min(0.99, round(float(px) + 0.02, 4))
+            body2 = dict(body)
+            body2["price"] = f"{px2:.4f}"
+            body2["client_order_id"] = str(uuid.uuid4())
+            st, data, sent = _submit_kalshi_order(key_id, pk, body2)
+            order = _extract_order(data)
+            fill_n = _fill_count(order)
+        except Exception:
+            pass
     return {
         "simulated": False,
         "http_status": st,

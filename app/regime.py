@@ -52,36 +52,142 @@ def _vpin_proxy(polarity: float, funding: float, squeeze_risk: float) -> float:
     return _clamp(0.45 * panic + 0.25 * crowded + 0.30 * (squeeze_risk / 100.0), 0.0, 1.0)
 
 
-def _hmm_regime(delta_pct: float | None, rsi: float | None, funding: float, polarity: float) -> dict[str, Any]:
-    """Lightweight regime posteriors (trend / mean_revert / high_vol / crisis)."""
-    p = {"trending": 0.25, "mean_reverting": 0.25, "high_vol": 0.25, "crisis": 0.25}
-    abs_dp = abs(delta_pct or 0.0)
-    if abs_dp > 0.12:
-        p["trending"] += 0.35
-        p["mean_reverting"] -= 0.08
-    elif abs_dp < 0.03:
-        p["mean_reverting"] += 0.30
-        p["trending"] -= 0.08
-    if rsi is not None:
-        if rsi >= 70 or rsi <= 30:
-            p["high_vol"] += 0.25
-            p["mean_reverting"] += 0.10
-        if rsi >= 78 or rsi <= 22:
-            p["crisis"] += 0.15
-    if abs(funding) > 0.04:
-        p["high_vol"] += 0.20
-        p["crisis"] += 0.10
-    if polarity <= -0.35 or polarity >= 0.55:
-        p["crisis"] += 0.20
-        p["high_vol"] += 0.10
-    # softmax-ish normalize
-    for k in p:
-        p[k] = max(0.02, p[k])
-    s = sum(p.values())
-    for k in p:
-        p[k] = round(p[k] / s, 3)
-    top = max(p, key=lambda k: p[k])
-    return {"regime": top, "regime_probs": p, "regime_conf": p[top]}
+# Causal HMM. States match the router: quiet, informed flow, thin liquidity.
+# Live code keeps only the forward filter α_t = P(S_t | y_1..y_t).
+# A smoothed posterior γ_t = P(S_t | y_1..y_T) uses the future and is not computed.
+_STATES = ("quiet", "informed_flow", "thin_liquidity")
+_CEILING = {"quiet": 3, "informed_flow": 2, "thin_liquidity": 1}
+_PIN_SECONDS = 60.0
+# Rows are the state we were in. Columns are the state we step into.
+_TRANS = (
+    (0.90, 0.06, 0.04),
+    (0.10, 0.82, 0.08),
+    (0.12, 0.08, 0.80),
+)
+# Emissions on (abs return, abs ofi, kyle λ, spread), each scaled to about [0, 1].
+_MU = {
+    "quiet": (0.15, 0.18, 0.20, 0.12),
+    "informed_flow": (0.72, 0.68, 0.78, 0.28),
+    "thin_liquidity": (0.28, 0.22, 0.40, 0.86),
+}
+_VAR = 0.07
+_FILTER = {"alpha": [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], "n": 0}
+
+
+def reset_filter() -> None:
+    """Start the forward filter from a uniform prior. Tests call this."""
+    _FILTER["alpha"] = [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0]
+    _FILTER["n"] = 0
+
+
+def _kyle_lambda(abs_return: float, abs_ofi: float) -> float:
+    """Price impact per unit of flow. High when price moves on little flow."""
+    return _clamp(abs_return / max(abs_ofi, 0.12), 0.0, 1.0)
+
+
+def _emission(obs: tuple[float, float, float, float]) -> list[float]:
+    likes: list[float] = []
+    for name in _STATES:
+        mu = _MU[name]
+        dist = 0.0
+        for i, value in enumerate(obs):
+            gap = value - mu[i]
+            dist += (gap * gap) / _VAR
+        likes.append(math.exp(-0.5 * dist))
+    return likes
+
+
+def _forward_filter(obs: tuple[float, float, float, float]) -> list[float]:
+    """One causal update. The previous α is the only memory. No backward pass."""
+    prev = _FILTER["alpha"]
+    predicted = [0.0, 0.0, 0.0]
+    for i in range(3):
+        for j in range(3):
+            predicted[j] += prev[i] * _TRANS[i][j]
+    liked = _emission(obs)
+    raw = [predicted[j] * liked[j] for j in range(3)]
+    total = sum(raw) or 1e-12
+    alpha = [value / total for value in raw]
+    _FILTER["alpha"] = alpha
+    _FILTER["n"] = int(_FILTER["n"]) + 1
+    return alpha
+
+
+def filtered_regime(
+    delta_pct: float | None,
+    ofi: float,
+    spread: float | None,
+    seconds_left: float | None,
+) -> dict[str, Any]:
+    """Filtered regime label plus the pin overlay. Not a smoothed posterior."""
+    abs_return = _clamp(abs(delta_pct or 0.0) / 0.25, 0.0, 1.0)
+    abs_ofi = _clamp(abs(ofi), 0.0, 1.0)
+    kyle = _kyle_lambda(abs_return, abs_ofi)
+    if spread is None:
+        spread_z = 0.20
+    else:
+        spread_z = _clamp(float(spread) / 0.10, 0.0, 1.0)
+    alpha = _forward_filter((abs_return, abs_ofi, kyle, spread_z))
+    probs = {name: round(alpha[i], 4) for i, name in enumerate(_STATES)}
+    top = max(_STATES, key=lambda name: probs[name])
+    pin = False
+    try:
+        pin = seconds_left is not None and float(seconds_left) <= _PIN_SECONDS
+    except (TypeError, ValueError):
+        pin = False
+    return {
+        "regime": top,
+        "regime_probs": probs,
+        "regime_conf": probs[top],
+        "prob_kind": "filtered",
+        "kyle_lambda": round(kyle, 4),
+        "pin_overlay": pin,
+        "filter_steps": int(_FILTER["n"]),
+    }
+
+
+def jev_size_tier(conf: float, side: str) -> int:
+    """Jev proposes a size tier. 0 means no order. Code may only lower this."""
+    if str(side or "").upper() not in {"YES", "NO"}:
+        return 0
+    score = float(conf or 0.0)
+    if score >= 0.75:
+        return 3
+    if score >= 0.60:
+        return 2
+    return 1
+
+
+def regime_router(
+    features: dict[str, Any],
+    *,
+    side: str,
+    conf: float,
+    order_budget: float,
+) -> dict[str, Any]:
+    """final tier = min(Jev tier, regime ceiling, pin ceiling)."""
+    regime = str(features.get("regime") or "thin_liquidity")
+    regime_ceiling = int(_CEILING.get(regime, 1))
+    pin = bool(features.get("pin_overlay"))
+    ceiling = 1 if pin else regime_ceiling
+    if pin:
+        ceiling = min(regime_ceiling, 1)
+    proposed = jev_size_tier(conf, side)
+    final = min(proposed, ceiling) if proposed else 0
+    budget = round(float(order_budget) * (final / 3.0), 4) if final else 0.0
+    return {
+        "prob_kind": "filtered",
+        "regime": regime,
+        "regime_conf": features.get("regime_conf"),
+        "kyle_lambda": features.get("kyle_lambda"),
+        "jev_tier": proposed,
+        "regime_ceiling": regime_ceiling,
+        "pin_overlay": pin,
+        "ceiling": ceiling,
+        "final_tier": final,
+        "budget_usd": budget,
+        "rule": "final = min(jev_tier, regime_ceiling, pin_ceiling)",
+    }
 
 
 def build_layer1_state(
@@ -138,7 +244,8 @@ def build_layer1_state(
     bocpd = _bocpd_alarm(deltas)
     ofi = _ofi_proxy(delta, delta_pct, yes_mid)
     vpin = _vpin_proxy(polarity, funding, squeeze)
-    hmm = _hmm_regime(delta_pct, float(rsi) if rsi is not None else None, funding, polarity)
+    seconds_left = win.get("seconds_left")
+    hmm = filtered_regime(delta_pct, ofi, spread, seconds_left)
 
     # Volatility proxy: window move + RSI extremes + funding crowding
     vol_proxy = _clamp(
@@ -154,7 +261,6 @@ def build_layer1_state(
         1.0,
     )
 
-    seconds_left = win.get("seconds_left")
     # 1s poll desk: last seconds of the window are still a live market, not "stale".
     # Only treat as dead once the window is closed.
     data_age_ok = seconds_left is None or float(seconds_left) > 0.0
@@ -201,8 +307,10 @@ def jev_triggers(features: dict[str, Any]) -> list[str]:
     t: list[str] = []
     if float(features.get("bocpd_alarm") or 0) >= 0.85:
         t.append("bocpd_alarm")
-    if features.get("regime") in {"high_vol", "crisis"}:
-        t.append("regime_transition")
+    if features.get("regime") == "thin_liquidity":
+        t.append("thin_liquidity")
+    if features.get("pin_overlay"):
+        t.append("pin_overlay")
     if abs(float(features.get("polarity_score") or 0)) >= 0.35:
         t.append("news_or_social_event")
     if float(features.get("vol_proxy") or 0) >= 1.5:

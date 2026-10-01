@@ -110,6 +110,40 @@ def evaluate_risk_gate(
             f"spread={spread}",
         )
 
+    # Book integrity — a junk 0.001/0.999 print is not market certainty.
+    def _px_ok(v: Any) -> float | None:
+        if v is None or v == "":
+            return None
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        if x > 1.5:
+            x = x / 100.0
+        if x < 0.01 or x > 0.99:
+            return None
+        return x
+
+    yb = _px_ok(features.get("yes_bid"))
+    ya = _px_ok(features.get("yes_ask"))
+    book_ok = True
+    book_detail = "clean"
+    if yb is not None and ya is not None and yb > ya:
+        book_ok = False
+        book_detail = f"crossed yes_bid={yb:.3f} > yes_ask={ya:.3f}"
+    elif yb is None and ya is None:
+        book_ok = False
+        book_detail = "no usable yes bid/ask"
+    elif (yb is not None and yb >= 0.99) or (ya is not None and ya <= 0.01):
+        book_ok = False
+        book_detail = f"degenerate print yes_bid={yb} yes_ask={ya}"
+    add(
+        "book_integrity",
+        book_ok,
+        "book is a real two-sided print (no 0.001/0.999 junk, not crossed)",
+        book_detail,
+    )
+
     # Liquidity stress
     liq = float(features.get("liquidity_stressed_proxy") or 0.0)
     add(
@@ -119,6 +153,27 @@ def evaluate_risk_gate(
         f"liq={liq:.3f}",
     )
 
+    # JEV path foresight — block buying into a predicted second move against us.
+    fc = judgment.get("jev_forecast") or {}
+    p_up = float(fc.get("p_next_up") or 0.0)
+    p_dn = float(fc.get("p_next_down") or 0.0)
+    bounce_p = float(fc.get("will_bounce_p") or 0.5)
+    nxt = str(fc.get("next_big_move") or "QUIET").upper()
+    path = str(fc.get("settle_path") or "EVEN").upper()
+    foresight_ok = True
+    foresight_detail = f"next={nxt} bounce={bounce_p:.2f} path={path}"
+    foresight_rule = "path forecast not fighting the side"
+    if side == "YES" and nxt == "DOWN" and max(p_dn, 0.0) >= 0.55:
+        foresight_ok = False
+        foresight_rule = "skip YES when Jev forecasts next impulse DOWN (p_next_down>=0.55)"
+    elif side == "NO" and nxt == "UP" and max(p_up, 0.0) >= 0.55:
+        foresight_ok = False
+        foresight_rule = "skip NO when Jev forecasts next impulse UP (p_next_up>=0.55)"
+    elif side in {"YES", "NO"} and path == "GIVE_BACK" and bounce_p >= 0.65:
+        foresight_ok = False
+        foresight_rule = "skip when Jev says the Δ will GIVE_BACK (bounce>=0.65)"
+    add("jev_foresight", foresight_ok, foresight_rule, foresight_detail)
+
     # Window still open = live. A 1s poller will often arrive with 1–7s left;
     # that is not stale. If Jev already said YES/NO, fire while the market exists.
     secs = features.get("seconds_left")
@@ -127,12 +182,19 @@ def evaluate_risk_gate(
     except (TypeError, ValueError):
         secs_f = None
     jev_fire = side in {"YES", "NO"} and str(judgment.get("judge_src") or "").startswith("jev")
-    window_open = secs_f is None or secs_f > 0.0
+    if secs_f is not None and secs_f <= 0.0:
+        window_open = False
+        detail = f"window_closed seconds_left={secs}"
+        rule = "window still open (seconds_left > 0)"
+    else:
+        window_open = secs_f is None or secs_f > 0.0
+        detail = f"seconds_left={secs}"
+        rule = "window still open (1s poll; Jev fire allowed into the close)"
     add(
         "data_freshness",
         window_open if jev_fire else (bool(features.get("data_age_ok", True)) or window_open),
-        "window still open (1s poll; Jev fire allowed into the close)",
-        f"seconds_left={secs}",
+        rule,
+        detail,
     )
 
     # Decision latency: HFT deadline does not apply. If Jev already answered

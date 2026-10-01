@@ -110,17 +110,22 @@ class Config:
     twitter_sample: int = _i("TWITTER_SAMPLE", 100)
 
     stake_usd: float = _f("STAKE_USD", 2.0)
-    # Live clip. 5 contracts, or skip if the cash cannot cover that many.
+    # Live clip in dollars, premium plus fee. Skip if cash cannot cover it.
+    order_budget_usd: float = _f("ORDER_BUDGET_USD", 5.0)
     order_count: float = _f("ORDER_COUNT", 5.0)
     conf_floor: float = _f("CONF_FLOOR", 0.55)
-    entry_ceil: float = _f("ENTRY_CEIL", 0.76)
+    entry_ceil: float = _f("ENTRY_CEIL", 0.65)
     # Do not buy a 1¢ corpse the book has already priced as the loser.
     entry_floor: float = _f("ENTRY_FLOOR", 0.20)
     # Fire only in the last few minutes. A $20 lead with 14 minutes left is not the settlement.
     entry_max_seconds: float = _f("ENTRY_MAX_SECONDS", 180.0)
     entry_min_seconds: float = _f("ENTRY_MIN_SECONDS", 25.0)
-    edge_floor: float = _f("EDGE_FLOOR", 0.0)
-    trade_on_lean: bool = _b("TRADE_ON_LEAN", True)
+    edge_floor: float = _f("EDGE_FLOOR", 0.02)
+    # Refuse to pay more than model fair minus this cushion (true edge).
+    entry_edge_cushion: float = _f("ENTRY_EDGE_CUSHION", 0.03)
+    # |spot-open| in dollars; beyond this mid-window the print is already moved.
+    max_abs_delta_usd: float = _f("MAX_ABS_DELTA_USD", 25.0)
+    trade_on_lean: bool = _b("TRADE_ON_LEAN", False)
     poll_sec: float = _f("POLL_SEC", 8.0)
     judge_ttl_sec: float = _f("JUDGE_TTL_SEC", 6.0)
     chart_poll_sec: float = _f("CHART_POLL_SEC", 1.0)
@@ -134,6 +139,15 @@ class Config:
     retry_stake_usd: float = _f("RETRY_STAKE_USD", 2.0)
     max_doubles: int = _i("MAX_DOUBLES", 4)
     martingale_reserve_keep: float = _f("MARTINGALE_RESERVE_KEEP", 0.92)
+
+    # Spike: sharp BTC move lets Jev fire before the last-three-minutes clock.
+    # Fade/follow shadows stay paper. The live ticket is still Jev's side + ENTRY_CEIL.
+    spike_enabled: bool = _b("SPIKE_ENABLED", True)
+    spike_move_1m_pct: float = _f("SPIKE_1M_PCT", 0.5)
+    spike_move_3m_pct: float = _f("SPIKE_3M_PCT", 0.8)
+    spike_cooldown_sec: float = _f("SPIKE_COOLDOWN_SEC", 180.0)
+    spike_max_hold_min: float = _f("SPIKE_MAX_HOLD_MIN", 15.0)
+    spike_cut_other_pct: float = _f("SPIKE_CUT_OTHER_PCT", 0.70)
 
     kalshi_api_key_id: str = os.environ.get("KALSHI_API_KEY_ID", "").strip()
     kalshi_private_key_path: str = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "").strip()

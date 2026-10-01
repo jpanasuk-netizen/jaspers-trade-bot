@@ -7,10 +7,12 @@ def main() -> None:
     assert tape_side(90.0, 100.0) == "NO"
     assert tape_side(100.0, 100.0) is None
 
-    book = {"yes_ask": 0.32, "no_ask": 0.69}
-    # Panel agrees, so 14 minutes left is allowed.
+    book = {"yes_ask": 0.32, "no_ask": 0.60}
+    # Quiet tape: 14 minutes left is too early unless a spike fired.
     early = live_entry_block("NO", book, 881, 80.0, 100.0)
-    assert early is None, early
+    assert early and "too early" in early, early
+    spike_ok = live_entry_block("NO", book, 881, 80.0, 100.0, spike_fired=True)
+    assert spike_ok is None, spike_ok
 
     # Jev/cheap side fights a spot that is below the open
     fight = live_entry_block("YES", book, 100, 80.0, 100.0)
@@ -20,9 +22,9 @@ def main() -> None:
     corpse = live_entry_block("YES", {"yes_ask": 0.015, "no_ask": 0.99}, 100, 110.0, 100.0)
     assert corpse and "floor" in corpse, corpse
 
-    # Last few seconds are still inside the window when the panel agrees.
+    # Last 7s is inside Kalshi's window but past our 25s floor.
     late = live_entry_block("NO", book, 7, 80.0, 100.0)
-    assert late is None, late
+    assert late and "too late" in late, late
 
     # Tape side at any point in the window. Book mid is the cheap YES, so the book votes NO.
     ok = live_entry_block("NO", book, 100, 80.0, 100.0)
@@ -39,7 +41,7 @@ def main() -> None:
         "layer1": {"ofi_proxy": -0.6, "regime": "trending"},
         "btcc": {"lean": "SKIP", "conf": 0.0},
     }
-    blocked = live_entry_block("YES", against, 800, 110.0, 100.0, panel)
+    blocked = live_entry_block("YES", against, 90, 110.0, 100.0, panel)
     assert blocked and "context disagrees" in blocked, blocked
     votes = {v["src"]: v["side"] for v in context_votes(panel, against)}
     assert votes["book"] == "NO" and votes["quantdinger"] == "NO" and votes["ofi"] == "NO"
@@ -55,11 +57,15 @@ def main() -> None:
     allowed = live_entry_block("YES", favored, 100, 110.0, 100.0, with_yes)
     assert allowed is None, allowed
 
-    # A regime break is its own skip, even when the side matches the tape.
-    crisis = live_entry_block(
-        "YES", favored, 100, 110.0, 100.0, {"layer1": {"regime": "crisis"}}
+    # Thin liquidity and the resolution pin cap size in code. They are not hard skips.
+    thin = live_entry_block(
+        "YES", favored, 100, 110.0, 100.0, {"layer1": {"regime": "thin_liquidity", "ofi_proxy": 0.5}}
     )
-    assert crisis and "crisis" in crisis, crisis
+    assert thin is None, thin
+    pinned = live_entry_block(
+        "YES", favored, 40, 110.0, 100.0, {"layer1": {"regime": "quiet", "pin_overlay": True, "ofi_proxy": 0.5}}
+    )
+    assert pinned is None, pinned
     print("side gate ok")
 
 

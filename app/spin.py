@@ -69,6 +69,12 @@ def _save_json(path: Path, data: Any) -> None:
 
 
 def already_spun(ticker: str | None) -> bool:
+
+    if _REFUSE_STREAK.get("n", 0) >= int(getattr(config, "max_refuse_streak", 6) or 6):
+        rec["result"] = "SKIP_REFUSE_STOP"
+        rec["reason"] = f"stopped after {_REFUSE_STREAK['n']} refused orders — book too thin"
+        _remember_skip(rec)
+        return rec
     if not ticker:
         return False
     data = _load_json(_paths()["spun"], {"done": []})
@@ -363,6 +369,8 @@ def live_entry_block(
     spot: Any,
     open_px: Any,
     judgment: dict[str, Any] | None = None,
+    *,
+    spike_fired: bool = False,
 ) -> str | None:
     """Why this live side must not be bought. None means it may be quoted.
 
@@ -370,7 +378,49 @@ def live_entry_block(
     happen at any time the window is still open. The clock does not wait
     for the last three minutes. Tape and the price floor still apply.
     """
-    del seconds_left  # window timing is not a gate once the panel passes
+    # Entry window: only the last few minutes of a 15m print. Early buys
+    # (12–14 min left) after Δ already moved are the mean-reversion losers.
+    # A fresh spike overrides "too early" — that is the point of the spike.
+    secs = _num(seconds_left)
+    if secs is not None:
+        if secs <= 0:
+            return f"window closed (seconds_left={secs:.1f})"
+        max_s = float(getattr(config, "entry_max_seconds", 180.0) or 180.0)
+        min_s = float(getattr(config, "entry_min_seconds", 25.0) or 25.0)
+        if not spike_fired and secs > max_s:
+            return (
+                f"too early: {secs:.0f}s left > entry_max_seconds {max_s:.0f} "
+                f"(wait for the last {max_s/60:.1f} min or a spike)"
+            )
+        if secs < min_s:
+            return f"too late: {secs:.0f}s left < entry_min_seconds {min_s:.0f}"
+
+    # Quant vault 15MIN-BTC: no new longs when RSI overbought, no shorts when oversold.
+    try:
+        rsi = float((judgment or {}).get("layer1", {}).get("rsi_14") or (judgment or {}).get("rsi_14") or 0)
+    except (TypeError, ValueError):
+        rsi = 0.0
+    if rsi > 0:
+        if side == "YES" and rsi >= 72:
+            return f"vault RSI {rsi:.0f} overbought — no new YES (15MIN-BTC rule)"
+        if side == "NO" and rsi <= 28:
+            return f"vault RSI {rsi:.0f} oversold — no new NO (15MIN-BTC rule)"
+
+    # Quant vault 15MIN-BTC: no new longs when RSI overbought, no shorts when oversold.
+    try:
+        rsi = float((judgment or {}).get("layer1", {}).get("rsi_14") or (judgment or {}).get("rsi_14") or 0)
+    except (TypeError, ValueError):
+        rsi = 0.0
+    if rsi > 0:
+        if side == "YES" and rsi >= 72:
+            return f"vault RSI {rsi:.0f} overbought — no new YES (15MIN-BTC rule)"
+        if side == "NO" and rsi <= 28:
+            return f"vault RSI {rsi:.0f} oversold — no new NO (15MIN-BTC rule)"
+    ask_dead = _entry_for(side, active)
+    if ask_dead is not None and ask_dead >= 0.97:
+        return f"market already decided (ask {ask_dead:.2f} >= 0.97) — skip"
+    if ask_dead is not None and ask_dead <= 0.03:
+        return f"side already dead (ask {ask_dead:.2f} <= 0.03) — skip"
     tape = tape_side(spot, open_px)
     if tape and side in {"YES", "NO"} and side != tape:
         return f"side {side} fights the tape ({tape}: spot vs window open). not flipping"
@@ -381,8 +431,6 @@ def live_entry_block(
             f"(book has already marked this side dead)"
         )
     layer1 = (judgment or {}).get("layer1") or {}
-    if layer1.get("regime") == "crisis":
-        return "layer1 regime=crisis"
     bocpd = _num(layer1.get("bocpd_alarm"))
     if bocpd is not None and bocpd >= 0.85:
         return f"bocpd alarm {bocpd:.2f} — state just broke"
@@ -395,6 +443,36 @@ def live_entry_block(
             with_side = ", ".join(f"{v['src']}={v['side']}" for v in agrees) or "none"
             return f"context disagrees ({against}); with {side}: {with_side}"
     return None
+
+
+def regime_order_budget(judgment: dict[str, Any] | None) -> float:
+    """Dollar clip after the code ceiling. Full budget only when the final tier is 3."""
+    router = (judgment or {}).get("regime_router") or {}
+    if "budget_usd" in router:
+        return float(router.get("budget_usd") or 0.0)
+    return float(config.order_budget_usd)
+
+
+def live_clip_usd(cash: float, judgment: dict[str, Any] | None) -> tuple[float, bool]:
+    """Fixed clip (default $3) until cash hits the recover target; never the whole roll.
+
+    martingale_enabled=False → always the configured stake_usd clip (min cash).
+    """
+    cash_f = max(0.0, float(cash or 0))
+    target = float(config.martingale_target or 6.0)
+    clip = float(getattr(config, "stake_usd", 3.0) or 3.0)
+    sized = regime_order_budget(judgment)
+    if not getattr(config, "martingale_enabled", False):
+        # Prefer the full clip; only shrink when cash is actually short.
+        want = min(clip, cash_f) if cash_f > 0 else clip
+        return (want, False) if want > 0 else (0.0, False)
+    if sized <= 0:
+        return 0.0, False
+    if cash_f + 1e-9 < target:
+        # recover mode: still a $3-style clip, not the entire balance
+        want = min(clip, cash_f)
+        return want, True
+    return min(float(sized), clip), False
 
 
 def paper_fill(side: str, entry: float, stake: float) -> dict[str, Any]:
@@ -416,7 +494,9 @@ def paper_fill(side: str, entry: float, stake: float) -> dict[str, Any]:
     }
 
 
-_EXIT_RESULTS = {"LIVE_SOLD", "LIVE_SELL_NO_FILL", "PAPER_SOLD"}
+_REFUSE_STREAK = {"n": 0}
+
+_EXIT_RESULTS = {"LIVE_SOLD", "LIVE_SELL_NO_FILL", "PAPER_SOLD", "CUSTOMER_SELL"}
 
 
 def open_fill(ticker: str | None) -> dict[str, Any] | None:
@@ -437,9 +517,169 @@ def open_fill(ticker: str | None) -> dict[str, Any] | None:
         res = str(rec.get("result") or "")
         if res == "LIVE_FILLED" and rec.get("filled"):
             held = rec
-        elif res in _EXIT_RESULTS:
+        elif res in _EXIT_RESULTS or res == "CUSTOMER_SELL":
             held = None
     return held
+
+
+def all_open_fills() -> list[dict[str, Any]]:
+    """Every live fill still marked open (not bot-exited, not customer-sold)."""
+    path = _paths()["ledger"]
+    if not path.is_file():
+        return []
+    held: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        t = str(rec.get("ticker") or "")
+        if not t:
+            continue
+        res = str(rec.get("result") or "")
+        if res == "LIVE_FILLED" and rec.get("filled"):
+            held[t] = rec
+        elif res in _EXIT_RESULTS or res == "CUSTOMER_SELL":
+            held.pop(t, None)
+    return list(held.values())
+
+
+def record_customer_sells() -> list[dict[str, Any]]:
+    """If a held ticket vanished on Kalshi without our exit, log CUSTOMER_SELL.
+
+    Captures the customer's sell price when the exchange reports realized PnL,
+    plus total loss on that ticket. Safe no-op in paper or when positions API
+    is unavailable.
+    """
+    logged: list[dict[str, Any]] = []
+    try:
+        from . import kalshi_live
+    except Exception:  # noqa: BLE001
+        return logged
+    fills = all_open_fills()
+    if not fills:
+        return logged
+    try:
+        positions = kalshi_live.fetch_positions()
+    except Exception:  # noqa: BLE001
+        return logged
+    if not positions or positions.get("_error"):
+        return logged
+    paths = _paths()
+    now = now_iso()
+    now_ts = time.time()
+    for held in fills:
+        t = str(held.get("ticker") or "")
+        # Only tickets from a window that should still be open. Old 15m tickets
+        # vanish from positions after settlement — that is NOT a customer sell.
+        close_epoch = held.get("close_epoch")
+        secs = held.get("seconds_left")
+        ts_raw = str(held.get("source_fill_ts") or held.get("ts") or "")
+        try:
+            fill_age_ok = True
+            if ts_raw.endswith("Z"):
+                from datetime import datetime, timezone
+
+                age = now_ts - datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp()
+                fill_age_ok = age < 3600  # only care about the last hour
+        except Exception:  # noqa: BLE001
+            fill_age_ok = True
+        window_live = False
+        if isinstance(close_epoch, (int, float)):
+            window_live = float(close_epoch) > now_ts
+        elif secs is not None:
+            try:
+                window_live = float(secs) > 0
+            except (TypeError, ValueError):
+                window_live = False
+        else:
+            # no timing on the fill row: fall back to ticker vs now (KXBTC15M-…HHMM)
+            window_live = fill_age_ok
+        if not (window_live and fill_age_ok):
+            continue
+        # CUSTOMER_SELL_MIN_AGE: never mark a just-opened ticket as sold.
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            _ts = str(held.get("source_fill_ts") or held.get("ts") or "")
+            if _ts.endswith("Z"):
+                _age = time.time() - _dt.fromisoformat(_ts.replace("Z", "+00:00")).timestamp()
+                if _age < 120:
+                    continue
+        except Exception:
+            pass
+        pos = positions.get(t)
+        # No row at all = API miss / not listed yet — not a customer sell.
+        if pos is None:
+            continue
+        try:
+            count = float(_contract_count(held))
+        except Exception:  # noqa: BLE001
+            count = 0.0
+        # still held on exchange → do nothing
+        live_count = float((pos or {}).get("count") or 0)
+        if live_count >= max(0.01, count * 0.5):
+            continue
+        # Need evidence of a real exit: realized PnL or a position that appeared then dropped.
+        realized = (pos or {}).get("realized_pnl")
+        try:
+            realized_f = float(realized) if realized is not None else None
+        except (TypeError, ValueError):
+            realized_f = None
+        if realized_f is None and live_count <= 0:
+            continue
+        # position gone / mostly gone without our exit row
+        entry = float(held.get("entry") or 0)
+        side = held.get("side")
+        stake = float(held.get("stake_usd") or (count * entry) or 0)
+        # exit price: if realized pnl known, exit ≈ entry + pnl/count
+        exit_px = None
+        if realized_f is not None and count > 0:
+            exit_px = round(entry + (realized_f / count), 4)
+        # total loss on this ticket
+        if realized_f is not None:
+            total_loss = round(min(0.0, realized_f), 4)  # negative = loss
+            pnl = round(realized_f, 4)
+        else:
+            # full flat with no pnl feed → treat as total loss of stake
+            total_loss = round(-stake, 4)
+            pnl = total_loss
+        rec = {
+            "ts": now,
+            "mode": "LIVE" if live_armed() else "PAPER",
+            "result": "CUSTOMER_SELL",
+            "ticker": t,
+            "window_id": held.get("window_id"),
+            "side": side,
+            "entry": entry,
+            "exit_price": exit_px,
+            "count": count,
+            "stake_usd": stake,
+            "customer_sell": True,
+            "sell_price": exit_px,
+            "pnl_usd": pnl,
+            "total_loss_usd": total_loss,
+            "reason": (
+                f"customer sold in app · entry {entry:.2f}"
+                + (f" · sell {exit_px:.2f}" if exit_px is not None else "")
+                + f" · total loss ${abs(total_loss):.2f}"
+            ),
+            "exchange_position": pos,
+            "source_fill_ts": held.get("ts"),
+        }
+        _append(paths["ledger"], rec)
+        try:
+            _touch_scoreboard(rec)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from .calibration import record_settle
+            _won = (pnl if isinstance(pnl, float) else 0) > 0
+            _cf = float(rec.get("conf") or 0.5)
+            record_settle(_cf, _won)
+        except Exception:  # noqa: BLE001
+            pass
+        logged.append(rec)
+    return logged
 
 
 def _exit_bid(side: str, active: dict[str, Any]) -> float | None:
@@ -467,8 +707,8 @@ def salvage_reason(
 ) -> str | None:
     """Sell only when the book prices the other side above 80%.
 
-    A 70% flip is not enough. The unused arguments stay so older callers
-    still match. None means hold the original ticket.
+    The unused arguments stay so older callers still match. None means hold
+    the original ticket.
     """
     del entry, spot, open_px, judgment, seconds_left
     if bid is None or bid < 0.01 or bid > 0.99:
@@ -577,6 +817,95 @@ def fill_pnl(rec: dict[str, Any], won: bool) -> float:
 
 _OPEN_SETTLE_UNTIL: dict[str, float] = {}
 
+_SPIKE: Any = None
+
+
+def _spike_engine():
+    global _SPIKE
+    if _SPIKE is None:
+        from .spike import SpikeTrader, jev_spike_decide
+
+        _SPIKE = SpikeTrader(
+            decide=jev_spike_decide,
+            move_1m_pct=float(getattr(config, "spike_move_1m_pct", 0.5) or 0.5),
+            move_3m_pct=float(getattr(config, "spike_move_3m_pct", 0.8) or 0.8),
+            cooldown_sec=float(getattr(config, "spike_cooldown_sec", 180.0) or 180.0),
+            max_hold_min=float(getattr(config, "spike_max_hold_min", 15.0) or 15.0),
+            cut_other_pct=float(getattr(config, "spike_cut_other_pct", 0.70) or 0.70),
+        )
+    return _SPIKE
+
+
+def _spike_gate(rec: dict[str, Any], active: dict[str, Any], j: dict[str, Any]) -> dict[str, Any] | None:
+    """Detect a sharp move. Live path already has Jev — do not judge twice."""
+    import time as _time
+
+    engine = _spike_engine()
+    mid = rec.get("spot") or j.get("spot")
+    try:
+        mid_f = float(mid or 0)
+    except (TypeError, ValueError):
+        mid_f = 0.0
+    if mid_f <= 0:
+        return None
+    engine.mids.append((_time.time(), mid_f))
+    now = _time.time()
+    if now < engine.cooldown_until:
+        return None
+    spike = engine.detect(mid_f)
+    if not spike:
+        return None
+    # too late in the window to open
+    try:
+        secs_f = float(rec.get("seconds_left")) if rec.get("seconds_left") is not None else None
+    except (TypeError, ValueError):
+        secs_f = None
+    if secs_f is not None and secs_f < 25:
+        return None
+    engine.cooldown_until = now + float(engine.cooldown_sec)
+    engine.spikes += 1
+    engine.block += 1
+    follow = "YES" if spike.direction == "up" else "NO"
+    fade = "NO" if spike.direction == "up" else "YES"
+    yes_ask = active.get("yes_ask")
+    no_ask = active.get("no_ask")
+    for who, side in (("fade", fade), ("follow", follow)):
+        if who not in engine.open:
+            ask = yes_ask if side == "YES" else no_ask
+            try:
+                ask_f = float(ask) if ask is not None else None
+            except (TypeError, ValueError):
+                ask_f = None
+            if ask_f is not None and 0.01 <= ask_f <= 0.99:
+                engine._open(who, side, ask_f, spike)
+    note = f"SPIKE {spike.direction} {spike.move_pct:.2f}% in {spike.window}"
+    engine._log(
+        {
+            "type": "spike",
+            "block": engine.block,
+            "ts": now,
+            "window": spike.window,
+            "direction": spike.direction,
+            "move_pct": spike.move_pct,
+            "from_price": spike.from_price,
+            "mid": mid_f,
+            "asked": True,
+            "jev": {"action": j.get("side"), "conf": j.get("conf")},
+            "window_secs_left": rec.get("seconds_left"),
+            "source": "live_desk",
+        }
+    )
+    return {
+        "note": note,
+        "window": spike.window,
+        "direction": spike.direction,
+        "move_pct": spike.move_pct,
+        "from_price": spike.from_price,
+        "follow_side": follow,
+        "fade_side": fade,
+        "block": engine.block,
+    }
+
 
 def settle_and_update_scoreboard() -> dict[str, Any]:
     """Recount fills from the ledger. Wins and losses come from Kalshi settlement."""
@@ -584,15 +913,16 @@ def settle_and_update_scoreboard() -> dict[str, Any]:
     ledger_path = paths["ledger"]
     if not ledger_path.is_file():
         return _load_json(paths["scoreboard"], _empty_scoreboard())
-    lines = ledger_path.read_text(encoding="utf-8").splitlines()[-500:]
+    lines = ledger_path.read_text(encoding="utf-8", errors="replace").splitlines()
     trades = []
     for line in lines:
         try:
             rec = json.loads(line)
         except Exception:  # noqa: BLE001
             continue
-        if rec.get("mode") in {"PAPER", "LIVE"} and rec.get("filled"):
+        if rec.get("mode") in {"PAPER", "LIVE"} and (rec.get("filled") or rec.get("result") in {"LIVE_FILLED", "PAPER_FILLED"}):
             trades.append(rec)
+    trades = trades[-200:]
     from .settle import attach_outcome
 
     wins = losses = 0
@@ -629,6 +959,12 @@ def settle_and_update_scoreboard() -> dict[str, Any]:
         publish_record()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .trade_review import refresh_operating_notes
+
+        refresh_operating_notes()
+    except Exception:  # noqa: BLE001
+        pass
     return sb
 
 
@@ -649,6 +985,11 @@ def _empty_scoreboard() -> dict[str, Any]:
 def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
     """One look: judge + gates + paper/live action for the active window."""
     paths = _paths()
+    # Watch for a customer sell in the Kalshi app (position gone without our exit).
+    try:
+        record_customer_sells()
+    except Exception:  # noqa: BLE001
+        pass
     j = judge(force=force_judge)
     win = j.get("window") or {}
     ticker = win.get("ticker")
@@ -696,6 +1037,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             "conf": j.get("conf"),
             "clear_edge": j.get("clear_edge"),
             "probabilities": j.get("probabilities"),
+            "jev_forecast": j.get("jev_forecast"),
             "reason": j.get("reason"),
             "sentiment_label": j.get("sentiment_label"),
             "polarity_score": j.get("polarity_score"),
@@ -763,6 +1105,13 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         quant_sizing = {"stake": stake, "mode": "error", "error": str(exc)[:120]}
 
+    try:
+        from .calibration import suggest_conf_floor
+        _cf_dyn = suggest_conf_floor(float(getattr(config, "conf_floor", 0.45) or 0.45))
+        if _cf_dyn and _cf_dyn > float(getattr(config, "conf_floor", 0.45) or 0.45):
+            rec["conf_floor_dyn"] = _cf_dyn
+    except Exception:  # noqa: BLE001
+        pass
     rec["quant_sizing"] = quant_sizing
     try:
         from .argus_gate import promotion_report
@@ -816,6 +1165,21 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
 
     cash_now = float(plan.get("cash") or 0)
     target = float(plan.get("target") or config.martingale_target)
+
+    # Spike (jev-trader e3dfeca): an extra trigger and a mid-window exception.
+    # It is NOT required — Jev can still pick on a quiet tape.
+    spike_evt = None
+    if getattr(config, "spike_enabled", False):
+        try:
+            spike_evt = _spike_gate(rec, active, j)
+        except Exception as exc:  # noqa: BLE001
+            rec["spike_error"] = str(exc)[:160]
+        if spike_evt:
+            rec["spike"] = spike_evt
+            rec["spike_fired"] = True
+        else:
+            rec["spike_fired"] = False
+
     recover = bool(
         mode == "LIVE"
         and config.martingale_enabled
@@ -832,10 +1196,13 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         try:
             from . import kalshi_live
 
+            creds = kalshi_live.load_creds()
+            dest = kalshi_live._resolve_market_ex(*creds, str(ticker or ""), active)
+            active["exchange_index"] = dest
             shard_cash = kalshi_live.ensure_shard_funds(
-                *kalshi_live.load_creds(),
-                dest_shard=int(active.get("exchange_index") or config.kalshi_exchange_index or 0),
-                min_dollars=0.04,
+                *creds,
+                dest_shard=dest,
+                min_dollars=float(getattr(config, "stake_usd", 3.0) or 3.0),
             )
             cash_f = float((shard_cash or {}).get("dest_cash") or cash_now or 0)
             try:
@@ -862,11 +1229,13 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                 rec["shard"] = shard_cash
                 _remember_skip(rec)
                 return rec
-            pick = kalshi_live.sized_quote(
-                jev_side, active, cash_f, max_count=float(config.order_count)
-            )
             one = kalshi_live.contract_quote(jev_side, active)
-            if one and float(one.get("ask") or 1) > config.entry_ceil + 1e-9:
+            _ceil_p = float(config.entry_ceil)
+            if jev_conf >= 0.75:
+                _ceil_p = min(0.88, _ceil_p + 0.12)
+            elif jev_conf >= 0.65:
+                _ceil_p = min(0.80, _ceil_p + 0.06)
+            if one and float(one.get("ask") or 1) > _ceil_p + 1e-9:
                 rec["result"] = "SKIP_ENTRY"
                 rec["reason"] = (
                     f"penny_jev: {jev_side} ask {one.get('ask')} > {config.entry_ceil:.2f}"
@@ -875,17 +1244,51 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                 rec["shard"] = shard_cash
                 _remember_skip(rec)
                 return rec
-            want_n = float(config.order_count)
-            if pick and float(pick["count"]) + 1e-9 < want_n:
-                rec["result"] = "SKIP_WIN_TOO_SMALL"
+            # True edge: never pay more than model fair minus a cushion.
+            cushion = float(getattr(config, "entry_edge_cushion", 0.03) or 0.03)
+            if one and jev_conf > 0 and float(one.get("ask") or 1) + cushion > jev_conf + 1e-9:
+                rec["result"] = "SKIP_NO_EDGE"
                 rec["reason"] = (
-                    f"penny_jev: need {want_n:.0f} {jev_side}, cash ${cash_f:.2f} "
-                    f"only covers {pick['count']}"
+                    f"penny_jev: pay {one.get('ask'):.2f}+{cushion:.2f} cushion > "
+                    f"jev_conf {jev_conf:.2f} on {jev_side} — no edge"
                 )
-                rec["quote"] = pick
+                rec["quote"] = one
                 rec["shard"] = shard_cash
                 _remember_skip(rec)
                 return rec
+            # Chase guard: mid-window Δ already moved hard — wait for the last few minutes.
+            tblock = live_entry_block(
+                jev_side, active, rec.get("seconds_left"), rec.get("spot"), rec.get("open_of_window"), j,
+                spike_fired=bool(rec.get("spike_fired")),
+            )
+            if tblock:
+                rec["result"] = "SKIP_ENTRY"
+                rec["reason"] = f"penny_jev: {tblock}"
+                rec["quote"] = one
+                rec["shard"] = shard_cash
+                _remember_skip(rec)
+                return rec
+            budget, bankroll_fill = live_clip_usd(cash_f, j)
+            rec["regime_router"] = j.get("regime_router")
+            rec["bankroll_fill"] = bankroll_fill
+            if budget <= 0:
+                rec["result"] = "SKIP_REGIME_CAP"
+                rec["reason"] = "regime ceiling left no size. not a partial clip, not a flip."
+                rec["quote"] = one
+                rec["shard"] = shard_cash
+                _remember_skip(rec)
+                return rec
+            if not bankroll_fill and cash_f + 1e-9 < budget:
+                rec["result"] = "SKIP_WIN_TOO_SMALL"
+                rec["reason"] = (
+                    f"penny_jev: need ${budget:.2f} {jev_side}, cash ${cash_f:.2f}. "
+                    f"Not buying a smaller clip, and not flipping."
+                )
+                rec["quote"] = one
+                rec["shard"] = shard_cash
+                _remember_skip(rec)
+                return rec
+            pick = kalshi_live.budget_quote(jev_side, active, budget, cash_f)
             if pick and cash_f + 1e-9 >= pick["need"]:
                 rec["recover_fire"] = True
                 rec["side"] = pick["side"]
@@ -896,6 +1299,11 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                 rec["spin_reason"] = (
                     f"penny_jev {pick['count']} {pick['side']} @ {pick['ask']:.2f}+fee {pick['fee']:.2f} "
                     f"= ${pick['need']:.2f} cash ${cash_f:.4f} jev_conf={jev_conf:.2f}"
+                    + (
+                        f" bankroll until ${float(config.martingale_target or 6):.0f}"
+                        if bankroll_fill
+                        else ""
+                    )
                 )
                 rec["quote"] = pick
                 rec["shard"] = shard_cash
@@ -907,6 +1315,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                         market=active,
                         stake_usd=pick["need"],
                         count=float(pick["count"]),
+                        limit_px=float(pick["px"]),
                     )
                 except Exception as exc:  # noqa: BLE001
                     rec["result"] = "LIVE_ERROR"
@@ -921,6 +1330,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                     if k in result
                 }
                 rec["filled"] = bool(result.get("filled")) or float(result.get("fill_count") or 0) > 0
+                _REFUSE_STREAK["n"] = 0 if rec.get("filled") else _REFUSE_STREAK.get("n", 0)
                 rec["result"] = "LIVE_FILLED" if rec["filled"] else "LIVE_SENT_NO_FILL"
                 mark_spun(ticker)
                 if rec["filled"]:
@@ -966,11 +1376,27 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         _remember_skip(rec)
         return rec
 
+    min_side = float(getattr(config, "min_side_prob", 0.55) or 0.55)
     if conf < config.conf_floor:
-        rec["result"] = "SKIP_CONF"
-        rec["reason"] = f"conf {conf:.3f} < {config.conf_floor}"
-        _remember_skip(rec)
-        return rec
+        # PR7 MIN_SIDE_PROB: if Jev SKIPped but one side is clearly likelier,
+        # still post the likelier side when it clears min_side_prob.
+        probs = (j.get("probabilities") or {})
+        p_yes = float(probs.get("yes") or 0)
+        p_no = float(probs.get("no") or 0)
+        best = "YES" if p_yes >= p_no else "NO"
+        best_p = max(p_yes, p_no)
+        if side == "SKIP" and best_p >= min_side and best_p < 0.92:
+            side = best
+            conf = best_p
+            rec["side"] = side
+            rec["conf"] = conf
+            rec["min_side_prob"] = best_p
+            rec["spin_reason"] = f"MIN_SIDE_PROB {best} {best_p:.2f} (Jev skip not decisive)"
+        else:
+            rec["result"] = "SKIP_CONF"
+            rec["reason"] = f"conf {conf:.3f} < {config.conf_floor}"
+            _remember_skip(rec)
+            return rec
 
     if config.edge_floor > 0 and edge < config.edge_floor:
         rec["result"] = "SKIP_EDGE"
@@ -984,9 +1410,137 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
         rec["reason"] = f"no {side} quote on book"
         _remember_skip(rec)
         return rec
-    if entry > config.entry_ceil + 1e-9:
+
+
+
+
+
+    # Vol breakout (Dan1ro0): skip when vol is collapsing / flat unless we are in
+    # the last 3 minutes (then price path matters more than vol expansion).
+    vol_x = (j.get("vol_expanding") or {}) if isinstance(j, dict) else {}
+    vxc = str(vol_x.get("choice") or "FLAT").upper()
+    if vxc == "COLLAPSE" and side in {"YES", "NO"}:
+        rec["result"] = "SKIP_VOL_COLLAPSE"
+        rec["reason"] = "vol collapsing back to range — breakout signal gone"
+        _remember_skip(rec)
+        return rec
+    if vxc in ("EXPAND_UP", "EXPAND_DOWN") and side in {"YES", "NO"}:
+        want = "YES" if vxc == "EXPAND_UP" else "NO"
+        if side == want:
+            rec["vol_breakout"] = vxc
+            rec["spin_reason"] = (rec.get("spin_reason") or "") + " | VOL-BREAKOUT"
+    # Polymarket 5m pattern: depth lean + flat price -> fade / wait for revert.
+    # If we would BUY with the lean and price is already flat/choppy, skip.
+    # If we would FADE the lean (trade against 65/35) allow — that is the edge.
+    dl = (j.get("depth_lean_revert") or {}) if isinstance(j, dict) else {}
+    dlc = str(dl.get("choice") or "FLAT").upper()
+    try:
+        _delta = float(rec.get("delta_from_open") or 0)
+    except (TypeError, ValueError):
+        _delta = 0.0
+    if dlc == "FADE" and abs(_delta) < 12 and side in {"YES", "NO"}:
+        rec["depth_fade"] = True
+        rec["spin_reason"] = (rec.get("spin_reason") or "") + " | DEPTH-FADE"
+    # SOFT_DEPTH: FLAT book is not a hard skip when Jev is confident.
+    elif dlc == "FLAT" and side in {"YES", "NO"}:
+        try:
+            _cf = float(rec.get("conf") or 0)
+        except (TypeError, ValueError):
+            _cf = 0.0
+        if _cf < 0.60:
+            rec["result"] = "SKIP_DEPTH_THIN"
+            rec["reason"] = "depth FLAT and conf < 0.60 — no book edge"
+            _remember_skip(rec)
+            return rec
+        rec["depth_flat_override"] = True
+    # Vault 15m: refuse single-candle entries when Jev says not multi-confirmed.
+    mc = j.get("multi_confirm_p") if isinstance(j, dict) else None
+    try:
+        mc_f = float(mc) if mc is not None else None
+    except (TypeError, ValueError):
+        mc_f = None
+    # SOFT_MULTI: only kill the trade when confirm is weak AND conf is not strong.
+    try:
+        _cf_mc = float(rec.get("conf") or 0)
+    except (TypeError, ValueError):
+        _cf_mc = 0.0
+    if mc_f is not None and mc_f < 0.30 and side in {"YES", "NO"} and _cf_mc < 0.70:
+        rec["result"] = "SKIP_SINGLE_CANDLE"
+        rec["reason"] = f"vault multi_confirm={mc_f:.2f} and conf={_cf_mc:.2f} — no second confirm"
+        _remember_skip(rec)
+        return rec
+    # PR7: operator may restrict sides (both | yes | no).
+    side_filter = str(getattr(config, "spike_side_filter", "both") or "both").lower()
+    if side_filter in ("yes", "long") and side == "NO":
+        rec["result"] = "SKIP_SIDE_FILTER"
+        rec["reason"] = "SPIKE_SIDE_FILTER=yes (NO blocked)"
+        _remember_skip(rec)
+        return rec
+    if side_filter in ("no", "short") and side == "YES":
+        rec["result"] = "SKIP_SIDE_FILTER"
+        rec["reason"] = "SPIKE_SIDE_FILTER=no (YES blocked)"
+        _remember_skip(rec)
+        return rec
+    # PR7: Jev may skip if the fill would not beat the fee.
+    fbf = (j.get("fill_beats_fee_p") if isinstance(j, dict) else None)
+    try:
+        fbf_f = float(fbf) if fbf is not None else None
+    except (TypeError, ValueError):
+        fbf_f = None
+    if fbf_f is not None and fbf_f < 0.35 and side in {"YES", "NO"}:
+        rec["result"] = "SKIP_FEE"
+        rec["reason"] = f"fill does not beat fee (fill_beats_fee={fbf_f:.2f})"
+        _remember_skip(rec)
+        return rec
+    # DYNAMIC_CEIL: high-confidence picks may pay a little more than the hard cap.
+    entry_ceil = float(config.entry_ceil)
+    try:
+        _conf_f = float(conf)
+    except (TypeError, ValueError):
+        _conf_f = 0.0
+    if _conf_f >= 0.75:
+        entry_ceil = min(0.88, entry_ceil + 0.12)
+    elif _conf_f >= 0.65:
+        entry_ceil = min(0.80, entry_ceil + 0.06)
+    if entry > entry_ceil + 1e-9:
         rec["result"] = "SKIP_ENTRY"
-        rec["reason"] = f"entry {entry:.4f} > {config.entry_ceil:.2f}"
+        rec["reason"] = f"entry {entry:.4f} > {entry_ceil:.2f} (conf {conf})"
+        _remember_skip(rec)
+        return rec
+
+    # (2) Real edge: never pay more than model fair minus a cushion.
+    cushion = float(getattr(config, "entry_edge_cushion", 0.03) or 0.03)
+    if conf > 0 and entry + cushion > conf + 1e-9:
+        rec["result"] = "SKIP_NO_EDGE"
+        rec["reason"] = f"pay {entry:.2f}+{cushion:.2f} cushion > conf {conf:.2f} on {side} — no edge"
+        _remember_skip(rec)
+        return rec
+
+    # (1) Chase gate: do not buy after the dump/pump already happened.
+    try:
+        delta = float(rec.get("delta_from_open") or 0)
+    except (TypeError, ValueError):
+        delta = 0.0
+    chase_need = 0.75
+    if side == "NO" and delta < -25 and conf < chase_need:
+        rec["result"] = "SKIP_CHASE"
+        rec["reason"] = f"already dumped Δ{delta:+.0f} — skip NO unless conf>={chase_need} (conf={conf:.2f})"
+        _remember_skip(rec)
+        return rec
+    if side == "YES" and delta > 25 and conf < chase_need:
+        rec["result"] = "SKIP_CHASE"
+        rec["reason"] = f"already pumped Δ{delta:+.0f} — skip YES unless conf>={chase_need} (conf={conf:.2f})"
+        _remember_skip(rec)
+        return rec
+
+    # Timing (same as penny path): only the last window minutes, unless a spike fired.
+    tblock = live_entry_block(
+        side, active, rec.get("seconds_left"), rec.get("spot"), rec.get("open_of_window"), j,
+        spike_fired=bool(rec.get("spike_fired")),
+    )
+    if tblock:
+        rec["result"] = "SKIP_ENTRY"
+        rec["reason"] = str(tblock)
         _remember_skip(rec)
         return rec
 
@@ -998,25 +1552,45 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             from . import martingale as mg
             from . import kalshi_live
 
+            creds = kalshi_live.load_creds()
+            dest = kalshi_live._resolve_market_ex(*creds, str(ticker or ""), active)
+            active["exchange_index"] = dest
             shard_cash = kalshi_live.ensure_shard_funds(
-                *kalshi_live.load_creds(),
-                dest_shard=int(active.get("exchange_index") or config.kalshi_exchange_index or 0),
-                min_dollars=0.04,
+                *creds,
+                dest_shard=dest,
+                min_dollars=float(getattr(config, "stake_usd", 3.0) or 3.0),
             )
-            cash_f = float((shard_cash or {}).get("dest_cash") or cash or 0)
+            cash_f = float((shard_cash or {}).get("dest_cash") or 0)
             if cash_f <= 0:
-                cash_f = float(mg.kalshi_cash() or 0)
+                cash_f = float(mg.kalshi_cash(dest) or 0)
             plan = mg.plan_stake(cash_f)
-            want_n = float(config.order_count)
-            pick = kalshi_live.sized_quote(side, active, cash_f, max_count=want_n)
-            got = float(pick["count"]) if pick else 0.0
-            if not pick or got + 1e-9 < want_n:
-                src = pick or kalshi_live.contract_quote(side, active) or {}
+            budget, bankroll_fill = live_clip_usd(cash_f, j)
+            rec["regime_router"] = j.get("regime_router")
+            rec["bankroll_fill"] = bankroll_fill
+            if budget <= 0:
+                rec["result"] = "SKIP_REGIME_CAP"
+                rec["reason"] = "regime ceiling left no size. not a partial clip, not a flip."
+                rec["shard"] = shard_cash
+                _remember_skip(rec)
+                return rec
+            if not bankroll_fill and cash_f + 1e-9 < budget:
+                src = kalshi_live.contract_quote(side, active) or {}
                 rec["result"] = "SKIP_WIN_TOO_SMALL"
                 rec["reason"] = (
-                    f"need {want_n:.0f} {side} @ {src.get('ask', '—')} "
-                    f"+fee, cash ${cash_f:.2f} covers {got:.2f}. "
-                    f"Not buying a smaller clip, and not flipping."
+                    f"need ${budget:.2f} {side} @ {src.get('ask', '—')}, "
+                    f"cash ${cash_f:.2f}. Not buying a smaller clip, and not flipping."
+                )
+                rec["shard"] = shard_cash
+                rec["quote"] = src
+                _remember_skip(rec)
+                return rec
+            pick = kalshi_live.budget_quote(side, active, budget, cash_f)
+            if not pick:
+                src = kalshi_live.contract_quote(side, active) or {}
+                rec["result"] = "SKIP_WIN_TOO_SMALL"
+                rec["reason"] = (
+                    f"need ${budget:.2f} {side} @ {src.get('ask', '—')}, "
+                    f"cash ${cash_f:.2f}. Not buying a smaller clip, and not flipping."
                 )
                 rec["shard"] = shard_cash
                 rec["quote"] = src
@@ -1044,6 +1618,11 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
             _remember_skip(rec)
             return rec
     else:
+        router = j.get("regime_router") or {}
+        tier = router.get("final_tier")
+        if tier is not None:
+            stake = round(float(stake) * (float(tier) / 3.0), 4)
+            rec["regime_router"] = router
         if entry > 0 and stake < entry and stake < 0.05:
             rec["result"] = "SKIP_WIN_TOO_SMALL"
             rec["reason"] = (
@@ -1068,6 +1647,7 @@ def evaluate_spin(force_judge: bool = False) -> dict[str, Any]:
                 market=active,
                 stake_usd=stake,
                 count=live_count,
+                limit_px=float(pick["px"]) if pick else None,
             )
         except Exception as exc:  # noqa: BLE001
             rec["mode"] = "LIVE"

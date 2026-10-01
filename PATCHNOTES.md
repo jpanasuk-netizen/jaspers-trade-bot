@@ -1,3 +1,14 @@
+# Patch notes — 2026-09-28
+
+- **ENTRY_CEIL binds.** `place_order`, `budget_quote`, and `sized_quote` abort above the cap (`SKIP_PRICEY`). A 96¢ ticket cannot fill. HUD shows the last would-have skip.
+- **TRADE_ON_LEAN off.** Jev HOLD/SKIP does not turn into a lean buy.
+- **Spike is live.** A sharp BTC 1m/3m move lets Jev fire before the last-three-minutes clock. Fade/follow shadows stay paper. Cap, tape, and Jev's named side still apply.
+- **$6 recover target and $1,000,000 day-stop placeholder are unchanged.** Under $6 the clip is still a clip, not the whole balance.
+- **Metrics lead with hit rate, Brier, $ PnL, drawdown, average entry.** Sharpe is labeled not-a-health-light.
+- **Desk.exe** v2026-09-28: Stop, Panic (kill file + disarm), Open HUD. Compact HUD toggle. CORS is localhost-only.
+
+---
+
 # Patch notes — 2026-09-21
 
 Saved on top of `eaf69ab` (Share desk: Jev battery, late-window fire, strip setup secrets).

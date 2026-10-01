@@ -121,7 +121,15 @@ def _slim_layer1(layer1: Any) -> dict[str, Any]:
         probs = {}
     return {
         "regime": layer1.get("regime"),
-        "regime_probs": {k: probs.get(k) for k in ("trending", "mean_revert", "high_vol", "crisis") if k in probs},
+        "regime_probs": {
+            k: probs.get(k) for k in ("quiet", "informed_flow", "thin_liquidity") if k in probs
+        },
+        "prob_kind": layer1.get("prob_kind"),
+        "kyle_lambda": layer1.get("kyle_lambda"),
+        "pin_overlay": layer1.get("pin_overlay"),
+        "jev_tier": layer1.get("jev_tier"),
+        "ceiling": layer1.get("ceiling"),
+        "final_tier": layer1.get("final_tier"),
         "bocpd_alarm": layer1.get("bocpd_alarm"),
         "ofi_proxy": layer1.get("ofi_proxy"),
         "vpin_proxy": layer1.get("vpin_proxy"),
@@ -282,7 +290,9 @@ def _build_block_event(j: dict[str, Any], mkt: dict[str, Any], spin_rec: dict[st
             "conf_floor": config.conf_floor,
             "entry_ceil": config.entry_ceil,
             "trade_on_lean": config.trade_on_lean,
+            "spike_enabled": bool(getattr(config, "spike_enabled", False)),
         },
+        "last_skip_pricey": spin._load_json(config.data_dir / "last_skip_pricey.json", None),
     }
 
 

@@ -164,6 +164,71 @@ def history(
     return rows[: max(1, min(int(limit), 2000))]
 
 
+ETH_LOG = Path(__file__).resolve().parent.parent / "eth_desk" / "data" / "orders.jsonl"
+
+
+def _iter_eth():
+    if not ETH_LOG.is_file():
+        return
+    with open(ETH_LOG, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+
+
+def eth_history(limit: int = 400) -> dict[str, Any]:
+    """ETH desk decisions. One row per window. Fills can carry a settlement."""
+    rows: list[dict[str, Any]] = []
+    actions: Counter[str] = Counter()
+    for raw in _iter_eth():
+        if not isinstance(raw, dict):
+            continue
+        sig = raw.get("signal") if isinstance(raw.get("signal"), dict) else {}
+        view = {
+            "ts": raw.get("ts"),
+            "window_open": raw.get("window_open"),
+            "action": raw.get("action"),
+            "reason": raw.get("reason"),
+            "rule": sig.get("rule"),
+            "side": sig.get("side"),
+            "run": sig.get("run"),
+            "ticker": raw.get("ticker"),
+            "budget": raw.get("budget"),
+            "filled": bool(raw.get("filled")),
+            "fill_count": raw.get("fill_count"),
+            "fill_price": raw.get("fill_price"),
+            "series": "KXETH15M",
+            "won": None,
+            "outcome_side": None,
+        }
+        actions[str(view["action"] or "—")] += 1
+        if view["filled"] and view["ticker"] and view["side"]:
+            try:
+                from .settle import attach_outcome
+
+                settled = attach_outcome({"ticker": view["ticker"], "side": view["side"]})
+                view["won"] = settled.get("won")
+                view["outcome_side"] = settled.get("outcome_side")
+            except Exception:  # noqa: BLE001
+                pass
+        rows.append(view)
+    fills = sum(1 for row in rows if row.get("filled"))
+    rows.reverse()
+    cap = max(1, min(int(limit), 2000))
+    return {
+        "n": len(rows),
+        "fills": fills,
+        "actions": dict(actions),
+        "series": "KXETH15M",
+        "rows": rows[:cap],
+    }
+
+
 def _json(handler: BaseHTTPRequestHandler, code: int, payload: Any) -> None:
     body = json.dumps(payload, default=str).encode("utf-8")
     handler.send_response(code)
@@ -214,6 +279,13 @@ class Handler(BaseHTTPRequestHandler):
             live_only = str(live_q).strip() not in {"0", "false", "no", "all"}
             rows = history(limit, result, side, mode, live_only=live_only)
             _json(self, 200, {"ok": True, "n": len(rows), "rows": rows})
+            return
+        if path == "/api/eth":
+            try:
+                limit = int((qs.get("limit") or ["400"])[0])
+            except (TypeError, ValueError):
+                limit = 400
+            _json(self, 200, {"ok": True, **eth_history(limit)})
             return
         if path == "/api/martingale":
             _json(self, 200, {"ok": True, "martingale": _load_json(config.data_dir / "martingale.json", {})})

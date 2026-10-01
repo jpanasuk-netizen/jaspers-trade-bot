@@ -44,6 +44,8 @@
   </footer>
 <script>
 const KNOBS = [
+  {key:"ORDER_BUDGET_USD", type:"number", step:"0.01", title:"Dollars each live order spends",
+   kid:"This is the live clip, fee included. 2 means two dollars. A full-confidence call spends this much. A weaker call spends less. If the piggy cannot cover the whole clip, that window is skipped."},
   {key:"ENTRY_CEIL", type:"number", step:"0.01", title:"How pricey a ticket we will buy",
    kid:"A ticket costs pennies to dollars. 0.75 means 75 cents. If a ticket costs 95 cents, the prize is only 5 cents. That is a tiny cookie. We wait until the ticket is 75 cents or less."},
   {key:"ENTRY_FLOOR", type:"number", step:"0.01", title:"Do not buy a ticket the book already says is dead",
@@ -54,8 +56,8 @@ const KNOBS = [
    kid:"Same as above. A passing panel can buy until the window actually closes."},
   {key:"CONF_FLOOR", type:"number", step:"0.01", title:"How sure the robot must be",
    kid:"Jev is the fast robot. 0.45 means it has to be a little more sure than a coin flip. If it is shrugging, we do not buy."},
-  {key:"STAKE_USD", type:"number", step:"0.01", title:"How many dollars per try (when we are rich enough)",
-   kid:"This is the grown‑up size. Right now we still buy one little ticket at a time until the piggy bank is bigger."},
+  {key:"STAKE_USD", type:"number", step:"0.01", title:"Day-stop unit, not the live clip",
+   kid:"The live clip is the dollars knob above. This number is what the day-stop uses when the big stop number is left unset. Two means the robot sits down after about four dollars of settled losses."},
   {key:"POLL_SEC", type:"number", step:"0.5", title:"How often we peek",
    kid:"The robot looks at the game over and over. 4 means about every four seconds. Smaller number = looks more. We are not a super‑fast Wall Street desk."},
   {key:"JEV_TIMEOUT_SEC", type:"number", step:"0.1", title:"How long we wait for Jev",

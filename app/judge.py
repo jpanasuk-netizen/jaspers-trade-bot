@@ -14,7 +14,7 @@ from typing import Any
 from .config import config
 from .market import snapshot
 from .micro import fetch_microstructure
-from .regime import build_layer1_state, jev_triggers
+from .regime import build_layer1_state, jev_triggers, regime_router
 from .risk_gate import evaluate_risk_gate
 from .sentiment import get_sentiment
 
@@ -68,7 +68,7 @@ def deterministic_judge(mkt: dict[str, Any], sent: dict[str, Any], features: dic
     route = "CONTINUE"
     if conf < config.jev_conf_floor:
         route = "SKIP"
-    elif float(features.get("bocpd_alarm") or 0) >= 0.85 or features.get("regime") == "crisis":
+    elif float(features.get("bocpd_alarm") or 0) >= 0.85:
         route = "ESCALATE" if config.layer2_enabled else "SKIP"
 
     if route == "SKIP":
@@ -113,6 +113,7 @@ def deterministic_judge(mkt: dict[str, Any], sent: dict[str, Any], features: dic
         "sentiment_label": stats.get("sentiment_label") or features.get("social_label") or "Neutral / Mixed",
         "polarity_score": polarity,
         "squeeze_risk_pct": float(features.get("squeeze_risk_pct") or 0.0),
+        "jev_forecast": _layer1_forecast(features, delta, p_yes),
         "catalyst_impact_score": 0.0,
         "signal_quality": round(quality, 3),
         "toxic_flow": round(toxic, 3),
@@ -125,6 +126,34 @@ def deterministic_judge(mkt: dict[str, Any], sent: dict[str, Any], features: dic
         "delta_pct": delta_pct,
         "yes_mid": yes_mid,
         "architecture": {"layer": "1-deterministic", "route": route},
+    }
+
+
+def _layer1_forecast(features: dict[str, Any], delta: float | None, p_yes: float) -> dict[str, Any]:
+    """Deterministic path guess when Jev is offline. Weaker than the JEV battery."""
+    ofi = float(features.get("ofi_proxy") or 0.0)
+    vol = float(features.get("vol_proxy") or 0.0)
+    d = float(delta or 0.0)
+    # After a dump, bounce (UP) is the classic 15m fade; after a pump, DOWN.
+    if d <= -25:
+        nxt, p_up, p_dn = "UP", 0.45 + min(0.2, abs(d) / 400.0), 0.35
+    elif d >= 25:
+        nxt, p_up, p_dn = "DOWN", 0.35, 0.45 + min(0.2, abs(d) / 400.0)
+    else:
+        nxt, p_up, p_dn = "QUIET", 0.38, 0.38
+    bounce = 0.5 + (0.2 if d > 20 or d < -20 else 0.0) + (0.1 if ofi * (1 if d > 0 else -1) < 0 else -0.05)
+    bounce = max(0.05, min(0.95, bounce))
+    path = "HOLD" if abs(d) < 12 else ("GIVE_BACK" if bounce > 0.55 else "HOLD")
+    return {
+        "next_big_move": nxt,
+        "next_move_conf": 0.35,
+        "will_bounce_p": round(bounce, 3),
+        "settle_path": path,
+        "path_conf": 0.35,
+        "p_next_up": round(p_up, 3),
+        "p_next_down": round(p_dn, 3),
+        "p_next_quiet": round(max(0.0, 1.0 - p_up - p_dn), 3),
+        "src": "layer1",
     }
 
 
@@ -148,6 +177,11 @@ def _apply_jev_to_shell(jev: dict[str, Any], features: dict[str, Any], sent: dic
         "sentiment_label": jev.get("sentiment_label") or features.get("social_label"),
         "polarity_score": jev.get("polarity_score"),
         "squeeze_risk_pct": jev.get("squeeze_risk_pct"),
+        "jev_forecast": jev.get("jev_forecast") or {},
+        "fill_beats_fee_p": jev.get("fill_beats_fee_p"),
+        "multi_confirm_p": jev.get("multi_confirm_p"),
+        "depth_lean_revert": jev.get("depth_lean_revert"),
+        "vol_expanding": jev.get("vol_expanding"),
         "catalyst_impact_score": 0.0,
         "signal_quality": jev.get("signal_quality"),
         "toxic_flow": round(float(jev.get("toxic_flow") if jev.get("toxic_flow") is not None else features.get("vpin_proxy") or 0.0), 3),
@@ -373,18 +407,33 @@ def judge(force: bool = False) -> dict[str, Any]:
         "vpin_proxy": features.get("vpin_proxy"),
         "vol_proxy": features.get("vol_proxy"),
         "liquidity_stressed_proxy": features.get("liquidity_stressed_proxy"),
+        "kyle_lambda": features.get("kyle_lambda"),
+        "pin_overlay": features.get("pin_overlay"),
+        "prob_kind": features.get("prob_kind"),
         "triggers": triggers,
         "data_age_ok": features.get("data_age_ok"),
     }
+    router = regime_router(
+        features,
+        side=str(j.get("side") or "SKIP"),
+        conf=float(j.get("conf") or 0.0),
+        order_budget=float(config.order_budget_usd),
+    )
+    j["regime_router"] = router
+    j["layer1"]["final_tier"] = router["final_tier"]
+    j["layer1"]["ceiling"] = router["ceiling"]
+    j["layer1"]["jev_tier"] = router["jev_tier"]
+    features["regime_router"] = router
     j["features"] = features
 
     # ---- Risk gate (absolute veto; code owns capital) ----
     decision_latency_ms = (time.time() - t0) * 1000.0
+    sized = float(router["budget_usd"]) if router.get("final_tier") else float(config.stake_usd)
     risk = evaluate_risk_gate(
         j,
         features,
         day_pnl=None,
-        stake_usd=config.stake_usd,
+        stake_usd=sized,
         decision_latency_ms=decision_latency_ms,
     )
     j["risk"] = risk
@@ -397,9 +446,10 @@ def judge(force: bool = False) -> dict[str, Any]:
         j["reason"] = (j.get("reason") or "") + " | RISK_BLOCK:" + ",".join(risk.get("reasons") or [])[:160]
 
     j["architecture_pipeline"] = [
-        "L1-deterministic",
+        "L1-hmm-filtered",
         "L1.5-jev" if (j.get("judge_src") == "jev") else "L1-fallback",
-        "L2-escalate" if route == "ESCALATE" and config.layer2_enabled else "L2-skipped",
+        "L2-escalate" if route == "ESCALATE" and config.layer2_enabled else "L2-only-when-warranted",
+        "code-ceiling",
         "risk-gate",
         "execution-owned-by-code",
     ]

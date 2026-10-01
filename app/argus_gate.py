@@ -1,10 +1,14 @@
 """Argus promotion gates for the live desk.
 
-From velesxbt/argus (https://x.com/velesxbt/status/2099531351225426277):
-a book is promotable only if Sharpe, drawdown, hit rate, and t-stat all
+A book is promotable only if Sharpe, drawdown, hit rate, and t-stat all
 clear on data the rule was not fit on, and then again on a sealed vault.
-Failing the gates does not stop the current $2 spin. It refuses a larger size.
-The model does not get to claim it passed.
+The discovery filter (Di Krass, status 2098014011254325306) raises that
+t-stat from 2 to 3, demands 100 settled trades, and rejects a result whose
+out-of-sample Sharpe falls below half the in-sample Sharpe or whose newest
+walk-forward fold is the weak one. Winston's margin warning is the same
+rule: a looser dial paints a pattern onto noise. Failing the gates does
+not change Jev's side and does not stop the current clip. It refuses a
+larger size. The model does not get to claim it passed.
 """
 from __future__ import annotations
 
@@ -19,11 +23,16 @@ from .config import config
 SHARPE_MIN = 1.5
 MAX_DD = 0.15
 HIT_MIN = 0.55
-T_MIN = 2.0
+T_MIN = 3.0
+# A Sharpe on a dozen trades is a story. No verdict before this many settlements.
+MIN_SETTLED = 100
 # research 85%, of which the last 30% is the validator. Final 15% is the vault.
 VAULT_FRACTION = 0.15
 OOS_OF_RESEARCH = 0.30
-MIN_EACH = 4
+MIN_EACH = 8
+OOS_DECAY_MIN = 0.5
+FOLD_HIT_MIN = 0.60
+FOLDS = 5
 _CACHE: dict[str, Any] = {"ts": 0.0, "report": None}
 
 
@@ -106,8 +115,10 @@ def grade_slice(returns: list[float], periods_per_year: float) -> dict[str, Any]
     return {"n": len(returns), "pass": ok, "gates": gates}
 
 
-def split_returns(rows: list[tuple[float, float]]) -> tuple[list[float], list[float], float]:
-    """rows are (unix_ts, return), oldest first. Returns (oos, vault, ppy)."""
+def split_returns(
+    rows: list[tuple[float, float]],
+) -> tuple[list[float], list[float], list[float], float]:
+    """rows are (unix_ts, return), oldest first. Returns (in_sample, oos, vault, ppy)."""
     rows = sorted(rows, key=lambda x: x[0])
     n = len(rows)
     n_vault = max(MIN_EACH, int(round(n * VAULT_FRACTION)))
@@ -117,39 +128,115 @@ def split_returns(rows: list[tuple[float, float]]) -> tuple[list[float], list[fl
     n_oos = max(MIN_EACH, int(round(len(research) * OOS_OF_RESEARCH)))
     n_oos = min(n_oos, max(0, len(research) - MIN_EACH))
     oos = research[len(research) - n_oos :]
+    ins = research[: len(research) - n_oos]
     stamps = [t for t, _ in rows]
-    return [r for _, r in oos], [r for _, r in vault], _periods_per_year(stamps, n)
+    return (
+        [r for _, r in ins],
+        [r for _, r in oos],
+        [r for _, r in vault],
+        _periods_per_year(stamps, n),
+    )
+
+
+def _fold_means(returns: list[float]) -> list[float]:
+    if len(returns) < FOLDS:
+        return []
+    size = len(returns) // FOLDS
+    if size < 1:
+        return []
+    means: list[float] = []
+    for i in range(FOLDS):
+        chunk = returns[i * size : (i + 1) * size if i < FOLDS - 1 else len(returns)]
+        if chunk:
+            means.append(_mean(chunk))
+    return means
+
+
+def walk_forward(returns: list[float]) -> dict[str, Any]:
+    """Most folds must make money, and the newest fold must not be the weak one."""
+    means = _fold_means(returns)
+    if len(means) < FOLDS:
+        return {"pass": False, "reason": "not enough trades to walk forward", "folds": means}
+    profitable = sum(1 for value in means if value > 0) / len(means)
+    fading = means[-1] < min(means[:-1])
+    ok = profitable + 1e-12 >= FOLD_HIT_MIN and not fading
+    if fading:
+        reason = "newest fold is the weakest; the edge is already fading"
+    elif profitable + 1e-12 < FOLD_HIT_MIN:
+        reason = f"only {profitable:.0%} of walk-forward folds made money"
+    else:
+        reason = "walk-forward holds"
+    return {
+        "pass": ok,
+        "reason": reason,
+        "fold_means": [round(value, 4) for value in means],
+        "folds_profitable": round(profitable, 3),
+    }
+
+
+def oos_decay(in_sample: list[float], oos: list[float], periods_per_year: float) -> dict[str, Any]:
+    """Out-of-sample Sharpe has to keep at least half of the in-sample Sharpe."""
+    inn = sharpe(in_sample, periods_per_year)
+    out = sharpe(oos, periods_per_year)
+    if inn <= 0:
+        return {"pass": False, "reason": "in-sample Sharpe is not positive", "ratio": None}
+    ratio = out / inn
+    ok = ratio + 1e-12 >= OOS_DECAY_MIN
+    return {
+        "pass": ok,
+        "reason": (
+            "out-of-sample held at least half the in-sample Sharpe"
+            if ok
+            else f"out-of-sample Sharpe is {ratio:.2f} of in-sample; fitted the past"
+        ),
+        "in_sample_sharpe": round(inn, 3),
+        "oos_sharpe": round(out, 3),
+        "ratio": round(ratio, 3),
+    }
 
 
 def judge_returns(rows: list[tuple[float, float]]) -> dict[str, Any]:
     """Validator grades OOS. Checker re-grades the vault. Both must pass."""
-    if len(rows) < MIN_EACH * 3:
-        report = {
+    rows = sorted(rows, key=lambda item: item[0])
+    if len(rows) < MIN_SETTLED:
+        return {
             "promote": False,
-            "reason": f"not enough settled trades ({len(rows)}) to split a vault",
+            "reason": (
+                f"need {MIN_SETTLED} settled trades before a size change "
+                f"({len(rows)} so far). t > {T_MIN:.0f} is not a verdict on a short sample"
+            ),
             "n": len(rows),
-            "source": "velesxbt/argus",
+            "source": "argus+discovery-filter",
+            "rules": "costs are already in the settled pnl; Jev's side is not touched",
         }
-        return report
-    oos, vault, ppy = split_returns(rows)
+    ins, oos, vault, ppy = split_returns(rows)
     validator = grade_slice(oos, ppy)
     checker = grade_slice(vault, ppy)
-    promote = bool(validator["pass"] and checker["pass"])
+    decay = oos_decay(ins, oos, ppy)
+    forward = walk_forward([ret for _, ret in rows])
+    promote = bool(validator["pass"] and checker["pass"] and decay["pass"] and forward["pass"])
     if promote:
-        reason = "validator and checker both passed; a larger size is allowed"
+        reason = "validator, vault, decay, and walk-forward passed; a larger size is allowed"
     elif not validator["pass"]:
         reason = "validator failed the out-of-sample gates; size stays put"
-    else:
+    elif not checker["pass"]:
         reason = "checker failed the sealed vault; size stays put"
+    elif not decay["pass"]:
+        reason = str(decay["reason"])
+    else:
+        reason = str(forward["reason"])
     return {
         "promote": promote,
         "reason": reason,
         "n": len(rows),
+        "trials": len(rows),
         "periods_per_year": round(ppy, 1),
         "validator": validator,
         "checker": checker,
-        "source": "velesxbt/argus",
-        "rules": "no agent grades its own sample; vault is unseen",
+        "oos_decay": decay,
+        "walk_forward": forward,
+        "source": "argus+discovery-filter",
+        "rules": "no agent grades its own sample; vault is unseen; t > 3; Jev still picks the side",
     }
 
 
