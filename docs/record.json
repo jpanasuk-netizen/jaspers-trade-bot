@@ -1,13 +1,19 @@
 {
-  "updated_at": "2026-10-02T06:51:03.141603+00:00",
+  "updated_at": "2026-10-02T07:50:28.943956+00:00",
   "wins": 66,
   "losses": 36,
   "pushes": 0,
   "pnl_usd": -14.1081,
-  "fills": 102,
+  "fills": 103,
   "last_side": "YES",
-  "last_result": "LIVE_SENT_NO_FILL",
+  "last_result": "LIVE_FILLED",
   "recent": [
+    {
+      "ts": "2026-10-02T07:50:05.223682+00:00",
+      "side": "YES",
+      "entry": 0.78,
+      "won": null
+    },
     {
       "ts": "2026-10-02T06:20:05.931304+00:00",
       "side": "YES",
@@ -49,12 +55,6 @@
       "side": "YES",
       "entry": 0.64,
       "won": false
-    },
-    {
-      "ts": "2026-10-01T10:35:03.116812+00:00",
-      "side": "YES",
-      "entry": 0.84,
-      "won": true
     }
   ],
   "source": "history desk"
