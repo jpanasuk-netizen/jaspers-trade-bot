@@ -1,18 +1,18 @@
 {
-  "updated_at": "2026-10-10T08:43:04.097007+00:00",
-  "wins": 71,
+  "updated_at": "2026-10-11T00:43:29.593761+00:00",
+  "wins": 72,
   "losses": 45,
   "pushes": 0,
-  "pnl_usd": -21.7727,
+  "pnl_usd": -21.0511,
   "fills": 117,
   "last_side": "NO",
-  "last_result": "LIVE_FILLED",
+  "last_result": "LIVE_SENT_NO_FILL",
   "recent": [
     {
       "ts": "2026-10-10T08:42:58.981825+00:00",
       "side": "NO",
       "entry": 0.72,
-      "won": null
+      "won": true
     },
     {
       "ts": "2026-10-08T20:57:16.824304+00:00",
