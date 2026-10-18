@@ -1,13 +1,19 @@
 {
-  "updated_at": "2026-10-18T00:30:17.788201+00:00",
+  "updated_at": "2026-10-18T22:22:04.894951+00:00",
   "wins": 75,
   "losses": 48,
   "pushes": 0,
   "pnl_usd": -24.4565,
-  "fills": 123,
+  "fills": 124,
   "last_side": "YES",
-  "last_result": "CUSTOMER_SELL",
+  "last_result": "LIVE_FILLED",
   "recent": [
+    {
+      "ts": "2026-10-18T22:21:51.979491+00:00",
+      "side": "YES",
+      "entry": 0.6,
+      "won": null
+    },
     {
       "ts": "2026-10-18T00:27:06.360218+00:00",
       "side": "YES",
@@ -48,12 +54,6 @@
       "ts": "2026-10-10T08:42:58.981825+00:00",
       "side": "NO",
       "entry": 0.72,
-      "won": true
-    },
-    {
-      "ts": "2026-10-08T20:57:16.824304+00:00",
-      "side": "NO",
-      "entry": 0.49,
       "won": true
     }
   ],
