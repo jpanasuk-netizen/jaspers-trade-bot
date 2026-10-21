@@ -1,13 +1,19 @@
 {
-  "updated_at": "2026-10-21T15:00:14.285879+00:00",
-  "wins": 77,
+  "updated_at": "2026-10-21T15:15:05.693421+00:00",
+  "wins": 79,
   "losses": 50,
   "pushes": 0,
-  "pnl_usd": -26.7411,
-  "fills": 128,
+  "pnl_usd": -24.6967,
+  "fills": 129,
   "last_side": "YES",
   "last_result": "CUSTOMER_SELL",
   "recent": [
+    {
+      "ts": "2026-10-21T15:00:22.837079+00:00",
+      "side": "YES",
+      "entry": 0.65,
+      "won": true
+    },
     {
       "ts": "2026-10-21T14:47:49.426960+00:00",
       "side": "YES",
@@ -49,12 +55,6 @@
       "side": "YES",
       "entry": 0.56,
       "won": false
-    },
-    {
-      "ts": "2026-10-16T16:10:03.275858+00:00",
-      "side": "YES",
-      "entry": 0.65,
-      "won": true
     }
   ],
   "source": "history desk"
